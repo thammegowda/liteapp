@@ -150,6 +150,10 @@ byte initializers. Apps open those bytes with
 `liteapp::vfs::FileSystem::from_zip()` and mount the immutable filesystem through
 `HttpServer::serve_static()`. ZIP contents are validated and expanded into
 shared memory on the first request; nothing is extracted to disk.
+Call `liteapp_link_embedded_resources(final_executable)` after creating each
+desktop executable. It is a no-op on macOS and ELF platforms; on Windows it
+adds every target-named `RCDATA` file directly to the final link, as required
+by the Visual Studio resource toolchain.
 
 Development servers can use `HttpServer::serve_manifest(root, manifest)` to
 mount an explicit newline-separated asset list. Routes are validated and MIME

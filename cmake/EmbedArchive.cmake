@@ -72,26 +72,7 @@ macro(liteapp_embed_archive)
 
     if(WIN32)
         add_library(${ARG_TARGET} STATIC "${source}")
-        set(compiled_resource "${generated_root}/${ARG_TARGET}.res")
-        if(MSVC)
-            add_custom_command(
-                OUTPUT "${compiled_resource}"
-                COMMAND "${CMAKE_RC_COMPILER}" /nologo "/fo${compiled_resource}" "${resource}"
-                DEPENDS "${resource}" "${archive}"
-                VERBATIM
-            )
-        else()
-            add_custom_command(
-                OUTPUT "${compiled_resource}"
-                COMMAND "${CMAKE_RC_COMPILER}" -O coff -i "${resource}" -o "${compiled_resource}"
-                DEPENDS "${resource}" "${archive}"
-                VERBATIM
-            )
-        endif()
-        add_custom_target(${ARG_TARGET}_resource DEPENDS "${compiled_resource}")
-        add_dependencies(${ARG_TARGET} ${ARG_TARGET}_resource)
-        target_link_options(${ARG_TARGET} INTERFACE "SHELL:${compiled_resource}")
-        set_property(TARGET ${ARG_TARGET} APPEND PROPERTY INTERFACE_LINK_DEPENDS "${compiled_resource}")
+        set_property(GLOBAL APPEND PROPERTY LITEAPP_EMBEDDED_WINDOWS_RESOURCES "${resource}")
     else()
         add_library(${ARG_TARGET} OBJECT "${source}" "${resource}")
     endif()
@@ -99,3 +80,15 @@ macro(liteapp_embed_archive)
     target_compile_features(${ARG_TARGET} PRIVATE cxx_std_23)
     liteapp_harden(${ARG_TARGET})
 endmacro()
+
+function(liteapp_link_embedded_resources target)
+    if(NOT TARGET "${target}")
+        message(FATAL_ERROR "Unknown embedded-resource consumer: ${target}")
+    endif()
+    if(WIN32)
+        get_property(resources GLOBAL PROPERTY LITEAPP_EMBEDDED_WINDOWS_RESOURCES)
+        if(resources)
+            target_sources(${target} PRIVATE ${resources})
+        endif()
+    endif()
+endfunction()
