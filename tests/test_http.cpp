@@ -189,7 +189,7 @@ TEST(FrameworkHttp, RejectsUnsafeLocalConfigurationAndSpoofedOrigin) {
 TEST(FrameworkHttp, AllowsExplicitUnauthenticatedLoopbackDevelopment) {
     TemporaryDirectory temporary;
     const auto script = temporary.path / "app.js";
-    std::ofstream{script} << "export const version = 1;\n";
+    std::ofstream{script, std::ios::binary} << "export const version = 1;\n";
     auto created = liteapp::HttpServer::create(liteapp::ServerOptions{
         .host = "127.0.0.1",
         .port = 0,
@@ -221,7 +221,7 @@ TEST(FrameworkHttp, AllowsExplicitUnauthenticatedLoopbackDevelopment) {
     EXPECT_EQ(first->status, 200);
     EXPECT_EQ(first->body, "export const version = 1;\n");
     EXPECT_EQ(first->get_header_value("Content-Type"), "text/javascript; charset=utf-8");
-    std::ofstream{script, std::ios::trunc} << "export const version = 2;\n";
+    std::ofstream{script, std::ios::binary | std::ios::trunc} << "export const version = 2;\n";
     const auto second = client.Get("/app.js");
     ASSERT_TRUE(second);
     EXPECT_EQ(second->status, 200);
