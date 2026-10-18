@@ -1,0 +1,7 @@
+.section __DATA,__liteapp_data,regular,no_dead_strip
+.p2align 4
+.globl _@LITEAPP_EMBED_SYMBOL@_begin
+.globl _@LITEAPP_EMBED_SYMBOL@_end
+_@LITEAPP_EMBED_SYMBOL@_begin:
+.incbin "@LITEAPP_EMBED_ARCHIVE@"
+_@LITEAPP_EMBED_SYMBOL@_end:

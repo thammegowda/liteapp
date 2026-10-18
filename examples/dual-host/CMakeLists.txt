@@ -57,4 +57,5 @@ target_link_libraries(liteapp_dual_host PRIVATE
     liteapp::service
     liteapp::vfs
 )
+liteapp_link_embedded_resources(liteapp_dual_host)
 liteapp_harden(liteapp_dual_host)

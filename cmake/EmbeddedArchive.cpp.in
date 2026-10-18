@@ -1,0 +1,29 @@
+#include <@LITEAPP_EMBED_HEADER@>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+extern "C" {
+extern const std::byte @LITEAPP_EMBED_SYMBOL@_begin[];
+extern const std::byte @LITEAPP_EMBED_SYMBOL@_end[];
+}
+#endif
+
+namespace @LITEAPP_EMBED_NAMESPACE@ {
+
+auto archive() noexcept -> std::span<const std::byte> {
+#ifdef _WIN32
+    const auto module = GetModuleHandleW(nullptr);
+    const auto resource =
+        FindResourceW(module, MAKEINTRESOURCEW(@LITEAPP_EMBED_RESOURCE_ID@), MAKEINTRESOURCEW(10));
+    if (!resource) return {};
+    const auto loaded = LoadResource(module, resource);
+    const auto* bytes = static_cast<const std::byte*>(LockResource(loaded));
+    return {bytes, SizeofResource(module, resource)};
+#else
+    return {@LITEAPP_EMBED_SYMBOL@_begin,
+            static_cast<std::size_t>(@LITEAPP_EMBED_SYMBOL@_end - @LITEAPP_EMBED_SYMBOL@_begin)};
+#endif
+}
+
+} // namespace @LITEAPP_EMBED_NAMESPACE@

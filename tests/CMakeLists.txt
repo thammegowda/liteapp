@@ -23,13 +23,12 @@ target_link_libraries(liteapp_tests
         liteapp::app
         liteapp::db
         liteapp::fs
-        liteapp::http
         liteapp::platform
         liteapp::service
-        liteapp::vfs
         liteapp::httplib
         liteapp_test_assets
 )
+liteapp_link_embedded_resources(liteapp_tests)
 liteapp_harden(liteapp_tests)
 
 gtest_discover_tests(liteapp_tests)

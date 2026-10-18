@@ -1,0 +1,11 @@
+.section .rodata.liteapp_archive,"a",@progbits
+.balign 16
+.globl @LITEAPP_EMBED_SYMBOL@_begin
+.type @LITEAPP_EMBED_SYMBOL@_begin,@object
+.globl @LITEAPP_EMBED_SYMBOL@_end
+.type @LITEAPP_EMBED_SYMBOL@_end,@object
+@LITEAPP_EMBED_SYMBOL@_begin:
+.incbin "@LITEAPP_EMBED_ARCHIVE@"
+@LITEAPP_EMBED_SYMBOL@_end:
+.size @LITEAPP_EMBED_SYMBOL@_begin, @LITEAPP_EMBED_SYMBOL@_end-@LITEAPP_EMBED_SYMBOL@_begin
+.section .note.GNU-stack,"",@progbits
