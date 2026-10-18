@@ -1,11 +1,5 @@
 include(CMakeParseArguments)
 
-if(WIN32)
-    enable_language(RC)
-else()
-    enable_language(ASM)
-endif()
-
 function(liteapp_embed_archive)
     cmake_parse_arguments(ARG "" "TARGET;NAMESPACE;HEADER;ROOT" "FILES" ${ARGN})
     foreach(required IN ITEMS TARGET NAMESPACE HEADER ROOT)
@@ -15,6 +9,11 @@ function(liteapp_embed_archive)
     endforeach()
     if(NOT ARG_FILES)
         message(FATAL_ERROR "liteapp_embed_archive requires FILES")
+    endif()
+    if(WIN32)
+        enable_language(RC)
+    else()
+        enable_language(ASM)
     endif()
 
     list(SORT ARG_FILES)
