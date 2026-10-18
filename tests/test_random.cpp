@@ -1,7 +1,21 @@
 #include <gtest/gtest.h>
 
+#include "liteapp/core/activity_gate.h"
 #include "liteapp/core/random.h"
 #include "liteapp/platform/openers.h"
+
+TEST(FrameworkCore, TracksIndependentActivityKinds) {
+    liteapp::ActivityGate gate;
+    EXPECT_FALSE(gate.any());
+    EXPECT_TRUE(gate.acquire("chat"));
+    EXPECT_FALSE(gate.acquire("chat"));
+    EXPECT_TRUE(gate.acquire("speech"));
+    EXPECT_TRUE(gate.any());
+    gate.release("chat");
+    EXPECT_FALSE(gate.acquire("speech"));
+    gate.release("speech");
+    EXPECT_FALSE(gate.any());
+}
 
 TEST(FrameworkRandom, GeneratesIndependentUrlSafeCapabilities) {
     const auto first = liteapp::secure_random_token();

@@ -14,15 +14,18 @@ add_executable(liteapp_tests
     test_generator.cpp
     test_http.cpp
     test_random.cpp
+    test_service.cpp
     test_vfs.cpp
 )
 target_link_libraries(liteapp_tests
     PRIVATE
         GTest::gtest_main
+        liteapp::app
         liteapp::db
         liteapp::fs
         liteapp::http
         liteapp::platform
+        liteapp::service
         liteapp::vfs
         liteapp::httplib
         liteapp_test_assets

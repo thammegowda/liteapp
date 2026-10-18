@@ -36,8 +36,13 @@ std::optional<std::string> normalized_path(std::string_view source, std::size_t 
     return std::string{source};
 }
 
-FileInfo file_info(std::string path, std::size_t size) {
-    const auto filesystem_path = std::filesystem::path{path};
+struct ContentType {
+    std::string extension;
+    std::string media_type;
+    std::optional<std::string> encoding;
+};
+
+ContentType classify(const std::filesystem::path& filesystem_path) {
     auto extension = filesystem_path.extension().string();
     std::ranges::transform(extension, extension.begin(), [](char character) {
         return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
@@ -60,12 +65,22 @@ FileInfo file_info(std::string path, std::size_t size) {
         extension == ".json") {
         encoding = "utf-8";
     }
+    return {
+        .extension = std::move(extension),
+        .media_type = std::move(media_type),
+        .encoding = std::move(encoding),
+    };
+}
+
+FileInfo file_info(std::string path, std::size_t size) {
+    const auto filesystem_path = std::filesystem::path{path};
+    auto type = classify(filesystem_path);
     return FileInfo{
         .path = std::move(path),
         .name = filesystem_path.filename().string(),
-        .extension = std::move(extension),
-        .media_type = std::move(media_type),
-        .text_encoding = std::move(encoding),
+        .extension = std::move(type.extension),
+        .media_type = std::move(type.media_type),
+        .text_encoding = std::move(type.encoding),
         .size = size,
     };
 }
@@ -93,6 +108,12 @@ private:
 };
 
 }  // namespace
+
+std::string content_type(const std::filesystem::path& path) {
+    auto type = classify(path);
+    if (type.encoding) type.media_type += "; charset=" + *type.encoding;
+    return type.media_type;
+}
 
 struct FileSystem::Impl {
     explicit Impl(std::span<const std::byte> bytes, Limits configured_limits)

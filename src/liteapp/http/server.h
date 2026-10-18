@@ -116,7 +116,14 @@ struct ServerOptions {
 struct StaticFile {
     std::string route;
     std::filesystem::path path;
-    std::string content_type;
+    std::string content_type{};
+};
+
+struct StaticManifestOptions {
+    std::string route_prefix{"/"};
+    std::string index_file{"index.html"};
+    std::size_t max_files{1024};
+    std::size_t max_manifest_bytes{1024U * 1024U};
 };
 
 class HttpServer {
@@ -135,6 +142,10 @@ public:
     [[nodiscard]] Result<void> serve_static(const std::filesystem::path& root);
     [[nodiscard]] Result<void> serve_static(vfs::FileSystem filesystem);
     [[nodiscard]] Result<void> serve_files(std::span<const StaticFile> files);
+    [[nodiscard]] Result<void> serve_manifest(
+        const std::filesystem::path& root,
+        const std::filesystem::path& manifest,
+        StaticManifestOptions options = {});
     void serve_file(std::string route, vfs::FileSystem filesystem, std::string path);
     [[nodiscard]] Result<int> bind();
     [[nodiscard]] Result<RunningHttpServer> start();

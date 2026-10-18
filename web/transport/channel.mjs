@@ -8,7 +8,7 @@ import {
     validateEnvelope,
 } from './protocol.mjs';
 
-function requestId() {
+function newRequestId() {
     if (!globalThis.crypto?.randomUUID)
         throw new Error('A cryptographically secure randomUUID implementation is required');
     return globalThis.crypto.randomUUID();
@@ -27,10 +27,12 @@ export class RequestChannel {
         this.#unsubscribe = transport.subscribe(message => this.#receive(message));
     }
 
-    request(method, payload, {signal, onEvent, transfer} = {}) {
+    request(method, payload, {id = newRequestId(), signal, onEvent, transfer} = {}) {
         if (this.#disposed) return Promise.reject(new Error('Request channel is disposed'));
         if (signal?.aborted) return Promise.reject(new RequestCancelledError());
-        const id = requestId();
+        if (typeof id !== 'string' || !id || id.length > 128)
+            return Promise.reject(new TypeError('Request ID must contain 1-128 characters'));
+        if (this.#pending.has(id)) return Promise.reject(new Error(`Request ID is already active: ${id}`));
         return new Promise((resolve, reject) => {
             const abort = () => {
                 const pending = this.#pending.get(id);

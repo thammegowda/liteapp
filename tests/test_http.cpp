@@ -9,6 +9,7 @@
 
 #include <liteapp/test_assets.h>
 
+#include "liteapp/app/desktop.h"
 #include "liteapp/http/server.h"
 #include "liteapp/vfs/filesystem.h"
 
@@ -34,6 +35,28 @@ public:
 };
 
 }  // namespace
+
+TEST(FrameworkApp, RunsHeadlessDesktopLifecycleCallbacks) {
+    auto created = liteapp::HttpServer::create();
+    ASSERT_TRUE(created);
+    auto server = std::move(*created);
+    server.get("/health", [](const liteapp::Request&) { return liteapp::Response::text("ok"); });
+    bool started = false;
+    bool ready = false;
+    const auto ran = liteapp::run_desktop_application(server, {
+        .app_id = "liteapp.test",
+        .title = "LiteApp test",
+        .development = true,
+        .on_ready = [&](std::string_view url) {
+            ready = url.starts_with("http://127.0.0.1:");
+            server.stop();
+        },
+        .on_started = [&] { started = true; },
+    });
+    ASSERT_TRUE(ran);
+    EXPECT_TRUE(started);
+    EXPECT_TRUE(ready);
+}
 
 TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     TemporaryDirectory temporary;
@@ -177,7 +200,7 @@ TEST(FrameworkHttp, AllowsExplicitUnauthenticatedLoopbackDevelopment) {
     auto server = std::move(*created);
     server.get("/health", [](const liteapp::Request&) { return liteapp::Response::text("ok"); });
     const std::array files{
-        liteapp::StaticFile{.route = "/app.js", .path = script, .content_type = "text/javascript; charset=utf-8"},
+        liteapp::StaticFile{.route = "/app.js", .path = script},
     };
     ASSERT_TRUE(server.serve_files(files));
     const auto bound = server.bind();
@@ -205,6 +228,46 @@ TEST(FrameworkHttp, AllowsExplicitUnauthenticatedLoopbackDevelopment) {
     EXPECT_EQ(second->body, "export const version = 2;\n");
 
     server.stop();
+}
+
+TEST(FrameworkHttp, ServesValidatedStaticManifestWithInferredTypes) {
+    TemporaryDirectory temporary;
+    std::filesystem::create_directories(temporary.path / "icons");
+    std::ofstream{temporary.path / "index.html"} << "<!doctype html><title>manifest</title>";
+    std::ofstream{temporary.path / "app.mjs"} << "export const ready = true;\n";
+    std::ofstream{temporary.path / "icons" / "logo.svg"} << "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+    const auto manifest = temporary.path / "assets.txt";
+    std::ofstream{manifest}
+        << "# application assets\nindex.html\napp.mjs\n/brand.svg\ticons/logo.svg\n";
+
+    auto created = liteapp::HttpServer::create();
+    ASSERT_TRUE(created);
+    auto server = std::move(*created);
+    ASSERT_TRUE(server.serve_manifest(temporary.path, manifest));
+    const auto bound = server.bind();
+    ASSERT_TRUE(bound);
+    std::jthread server_thread{[&server] { static_cast<void>(server.listen_after_bind()); }};
+    server.wait_until_ready();
+
+    httplib::Client client{"127.0.0.1", *bound};
+    const auto index = client.Get("/");
+    ASSERT_TRUE(index);
+    EXPECT_EQ(index->status, 200);
+    EXPECT_EQ(index->get_header_value("Content-Type"), "text/html; charset=utf-8");
+    const auto module = client.Get("/app.mjs");
+    ASSERT_TRUE(module);
+    EXPECT_EQ(module->status, 200);
+    EXPECT_EQ(module->get_header_value("Content-Type"), "text/javascript; charset=utf-8");
+    const auto icon = client.Get("/brand.svg");
+    ASSERT_TRUE(icon);
+    EXPECT_EQ(icon->status, 200);
+    EXPECT_EQ(icon->get_header_value("Content-Type"), "image/svg+xml");
+    server.stop();
+
+    std::ofstream{manifest, std::ios::trunc} << "../secret.txt\n";
+    auto rejected = liteapp::HttpServer::create();
+    ASSERT_TRUE(rejected);
+    EXPECT_FALSE(rejected->serve_manifest(temporary.path, manifest));
 }
 
 TEST(FrameworkHttp, ServesAuthenticatedVirtualFilesAndFallback) {

@@ -172,6 +172,18 @@ if(WIN32)
 endif()
 liteapp_harden(liteapp_platform)
 
+add_library(liteapp_app src/liteapp/app/desktop.cpp)
+add_library(liteapp::app ALIAS liteapp_app)
+target_include_directories(liteapp_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(liteapp_app PUBLIC liteapp::core liteapp::http liteapp::platform)
+liteapp_harden(liteapp_app)
+
+add_library(liteapp_service src/liteapp/service/router.cpp)
+add_library(liteapp::service ALIAS liteapp_service)
+target_include_directories(liteapp_service PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(liteapp_service PUBLIC liteapp::core liteapp::http liteapp::json)
+liteapp_harden(liteapp_service)
+
 if(LITEAPP_BUILD_TESTS)
     if(NOT EXISTS "${LITEAPP_GOOGLETEST_SOURCE}/CMakeLists.txt")
         message(FATAL_ERROR "Missing GoogleTest submodule. Run: git submodule update --init --recursive")

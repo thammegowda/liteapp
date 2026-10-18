@@ -10,6 +10,7 @@
 #include <set>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <httplib.h>
 
@@ -38,6 +39,22 @@ bool token_component_valid(std::string_view value) noexcept {
         const auto byte = static_cast<unsigned char>(character);
         return std::isalnum(byte) != 0 || character == '-' || character == '_';
     });
+}
+
+bool relative_asset_path_valid(std::string_view value) noexcept {
+    if (value.empty() || value.front() == '/' || value.find('\\') != std::string_view::npos ||
+        value.find('\0') != std::string_view::npos || value.find_first_of("?#") != std::string_view::npos) {
+        return false;
+    }
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find('/', start);
+        const auto component = value.substr(start, end - start);
+        if (component.empty() || component == "." || component == "..") return false;
+        if (end == std::string_view::npos) break;
+        start = end + 1U;
+    }
+    return true;
 }
 
 std::string_view trim(std::string_view value) noexcept {
@@ -374,10 +391,10 @@ Result<void> HttpServer::serve_files(std::span<const StaticFile> files) {
             return std::unexpected(
                 Error{"invalid_assets", "development asset does not exist: " + file.path.string()});
         }
-        if (file.content_type.empty()) {
-            return std::unexpected(Error{"invalid_assets", "development asset content type must not be empty"});
-        }
-        impl_->server->Get(file.route, [file](const auto&, auto& response) {
+        auto registered = file;
+        if (registered.content_type.empty()) registered.content_type = vfs::content_type(registered.path);
+        auto route = registered.route;
+        impl_->server->Get(std::move(route), [file = std::move(registered)](const auto&, auto& response) {
             constexpr std::uintmax_t MAX_DEVELOPMENT_ASSET_BYTES = 64U * 1024U * 1024U;
             std::error_code size_error;
             const auto size = std::filesystem::file_size(file.path, size_error);
@@ -400,6 +417,60 @@ Result<void> HttpServer::serve_files(std::span<const StaticFile> files) {
         });
     }
     return {};
+}
+
+Result<void> HttpServer::serve_manifest(
+    const std::filesystem::path& root,
+    const std::filesystem::path& manifest,
+    StaticManifestOptions options) {
+    if (options.route_prefix.empty() || options.route_prefix.front() != '/' ||
+        !options.route_prefix.ends_with('/') || options.route_prefix.find_first_of("?#") != std::string::npos ||
+        !relative_asset_path_valid(options.index_file) || !options.max_files || !options.max_manifest_bytes) {
+        return std::unexpected(Error{"invalid_assets", "static manifest options are invalid"});
+    }
+    std::error_code error;
+    if (!std::filesystem::is_directory(root, error)) {
+        return std::unexpected(Error{"invalid_assets", "static asset directory does not exist: " + root.string()});
+    }
+    const auto manifest_size = std::filesystem::file_size(manifest, error);
+    if (error || manifest_size > options.max_manifest_bytes) {
+        return std::unexpected(
+            Error{"invalid_assets", error ? "static asset manifest does not exist: " + manifest.string()
+                                           : "static asset manifest exceeds its size limit"});
+    }
+    std::ifstream input{manifest};
+    if (!input) {
+        return std::unexpected(Error{"invalid_assets", "static asset manifest cannot be opened: " + manifest.string()});
+    }
+    std::vector<StaticFile> files;
+    for (std::string entry; std::getline(input, entry);) {
+        if (entry.ends_with('\r')) entry.pop_back();
+        if (entry.empty() || entry.starts_with('#')) continue;
+        const auto separator = entry.find('\t');
+        const auto path = separator == std::string::npos ? entry : entry.substr(separator + 1U);
+        auto route = separator == std::string::npos
+                         ? path == options.index_file ? options.route_prefix : options.route_prefix + path
+                         : entry.substr(0, separator);
+        if (!relative_asset_path_valid(path) || route.empty() || route.front() != '/' ||
+            route.find_first_of("?#") != std::string::npos) {
+            return std::unexpected(
+                Error{"invalid_assets", "static asset manifest contains an invalid entry: " + entry});
+        }
+        if (files.size() >= options.max_files) {
+            return std::unexpected(Error{"invalid_assets", "static asset manifest contains too many files"});
+        }
+        files.push_back({
+            .route = std::move(route),
+            .path = root / path,
+        });
+    }
+    if (input.bad()) {
+        return std::unexpected(Error{"invalid_assets", "static asset manifest could not be read: " + manifest.string()});
+    }
+    if (files.empty()) {
+        return std::unexpected(Error{"invalid_assets", "static asset manifest contains no files"});
+    }
+    return serve_files(files);
 }
 
 void HttpServer::serve_file(std::string route, vfs::FileSystem filesystem, std::string path) {

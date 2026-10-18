@@ -59,6 +59,15 @@ std::string text(std::span<const std::byte> bytes) {
 
 }  // namespace
 
+TEST(VirtualFilesystem, InfersHttpContentTypesFromPaths) {
+    EXPECT_EQ(liteapp::vfs::content_type("index.HTML"), "text/html; charset=utf-8");
+    EXPECT_EQ(liteapp::vfs::content_type("app.mjs"), "text/javascript; charset=utf-8");
+    EXPECT_EQ(liteapp::vfs::content_type("icons/logo.svg"), "image/svg+xml");
+    EXPECT_EQ(liteapp::vfs::content_type("icons/logo.png"), "image/png");
+    EXPECT_EQ(liteapp::vfs::content_type("model.wasm"), "application/wasm");
+    EXPECT_EQ(liteapp::vfs::content_type("weights.bin"), "application/octet-stream");
+}
+
 TEST(VirtualFilesystem, LazilyReadsAndSharesEmbeddedFilesAcrossThreads) {
     const auto created = liteapp::vfs::FileSystem::from_zip(liteapp::test_assets::archive());
     ASSERT_TRUE(created);
