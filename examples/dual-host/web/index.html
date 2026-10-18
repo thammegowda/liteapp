@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LiteApp dual-host skeleton</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">LiteApp skeleton</p>
+    <h1>One UI, three host variants</h1>
+    <nav aria-label="Host variant">
+      <button type="button" data-variant="desktop">Desktop</button>
+      <button type="button" data-variant="wasm">Wasm</button>
+      <button type="button" data-variant="webgpu">WebGPU</button>
+    </nav>
+    <form id="echo">
+      <input id="value" value="Hello from LiteApp" aria-label="Echo value">
+      <button type="submit">Send</button>
+    </form>
+    <pre id="result" role="status">Choose a host variant.</pre>
+  </main>
+</body>
+</html>

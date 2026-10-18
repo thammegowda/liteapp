@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -11,6 +12,8 @@
 #include "liteapp/core/result.h"
 
 namespace liteapp::vfs {
+
+[[nodiscard]] std::string content_type(const std::filesystem::path& path);
 
 struct Limits {
     std::size_t max_archive_bytes{16U * 1024U * 1024U};

@@ -141,11 +141,12 @@ Result<void> reveal_in_file_manager(const std::filesystem::path& file) {
     return reveal_windows(file);
 #elif defined(__APPLE__)
     if (spawn_opener("open", {"-R", file.string()})) return {};
+    return std::unexpected(Error{"open_path", "no supported file manager was available"});
 #else
     const auto parent = file.parent_path().string();
     if (spawn_opener("xdg-open", {parent})) return {};
-#endif
     return std::unexpected(Error{"open_path", "no supported file manager was available"});
+#endif
 }
 
 }  // namespace liteapp::platform

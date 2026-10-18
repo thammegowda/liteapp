@@ -1,0 +1,145 @@
+name: LiteApp CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liteapp-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JSON_REVISION: 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03
+  GOOGLETEST_REVISION: 8eff9e336692fc95961e096564f1044c600b881d
+
+jobs:
+  native:
+    name: Native and browser tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-26
+          - windows-2022
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out LiteApp
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install Ninja on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install --yes ninja-build
+
+      - name: Install Ninja on macOS
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Restore pinned test dependencies
+        shell: bash
+        run: |
+          git clone --filter=blob:none https://github.com/nlohmann/json.git libs/json
+          git -C libs/json checkout "$JSON_REVISION"
+          git clone --filter=blob:none https://github.com/google/googletest.git libs/googletest
+          git -C libs/googletest checkout "$GOOGLETEST_REVISION"
+
+      - name: Configure LiteApp
+        if: runner.os != 'Windows'
+        run: cmake --preset debug
+
+      - name: Configure LiteApp with MSVC
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-debug -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+
+      - name: Build LiteApp
+        if: runner.os != 'Windows'
+        run: cmake --build --preset debug --parallel
+
+      - name: Build LiteApp with MSVC
+        if: runner.os == 'Windows'
+        run: cmake --build build-debug --config Debug --parallel
+
+      - name: Run C++ tests
+        if: runner.os != 'Windows'
+        run: ctest --preset debug --output-on-failure
+
+      - name: Run C++ tests with MSVC
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build-debug -C Debug --output-on-failure
+
+      - name: Run browser runtime tests
+        run: node --test tests/browser/*.mjs
+
+      - name: Configure dual-host skeleton
+        if: runner.os != 'Windows'
+        run: cmake -S examples/dual-host -B build-dual-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure dual-host skeleton with MSVC
+        if: runner.os == 'Windows'
+        run: cmake -S examples/dual-host -B build-dual-host -G "Visual Studio 17 2022" -A x64
+
+      - name: Build dual-host skeleton
+        if: runner.os != 'Windows'
+        run: cmake --build build-dual-host --parallel
+
+      - name: Build dual-host skeleton with MSVC
+        if: runner.os == 'Windows'
+        run: cmake --build build-dual-host --config Release --parallel
+
+      - name: Upload dual-host skeleton
+        uses: actions/upload-artifact@v6
+        with:
+          name: liteapp-dual-host-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            build-dual-host/liteapp-dual-host
+            build-dual-host/liteapp-dual-host.exe
+            build-dual-host/Release/liteapp-dual-host.exe
+          if-no-files-found: error
+
+  sanitizers:
+    name: Address and undefined behavior sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out LiteApp
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install build tools
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install --yes ninja-build
+
+      - name: Restore pinned test dependencies
+        run: |
+          git clone --filter=blob:none https://github.com/nlohmann/json.git libs/json
+          git -C libs/json checkout "$JSON_REVISION"
+          git clone --filter=blob:none https://github.com/google/googletest.git libs/googletest
+          git -C libs/googletest checkout "$GOOGLETEST_REVISION"
+
+      - name: Configure sanitizer build
+        run: cmake --preset sanitize
+
+      - name: Build sanitizer suite
+        run: cmake --build --preset sanitize --parallel
+
+      - name: Run sanitizer suite
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset sanitize --output-on-failure

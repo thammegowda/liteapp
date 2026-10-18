@@ -59,6 +59,15 @@ std::string text(std::span<const std::byte> bytes) {
 
 }  // namespace
 
+TEST(VirtualFilesystem, InfersHttpContentTypesFromPaths) {
+    EXPECT_EQ(liteapp::vfs::content_type("index.HTML"), "text/html; charset=utf-8");
+    EXPECT_EQ(liteapp::vfs::content_type("app.mjs"), "text/javascript; charset=utf-8");
+    EXPECT_EQ(liteapp::vfs::content_type("icons/logo.svg"), "image/svg+xml");
+    EXPECT_EQ(liteapp::vfs::content_type("icons/logo.png"), "image/png");
+    EXPECT_EQ(liteapp::vfs::content_type("model.wasm"), "application/wasm");
+    EXPECT_EQ(liteapp::vfs::content_type("weights.bin"), "application/octet-stream");
+}
+
 TEST(VirtualFilesystem, LazilyReadsAndSharesEmbeddedFilesAcrossThreads) {
     const auto created = liteapp::vfs::FileSystem::from_zip(liteapp::test_assets::archive());
     ASSERT_TRUE(created);
@@ -88,6 +97,11 @@ TEST(VirtualFilesystem, LazilyReadsAndSharesEmbeddedFilesAcrossThreads) {
     EXPECT_EQ((**info).media_type, "text/html");
     EXPECT_EQ((**info).text_encoding, "utf-8");
     EXPECT_EQ((**info).size, contents.front()->size());
+    const auto module = filesystem.stat("module.mjs");
+    ASSERT_TRUE(module);
+    ASSERT_TRUE(*module);
+    EXPECT_EQ((**module).media_type, "text/javascript");
+    EXPECT_EQ((**module).text_encoding, "utf-8");
     const auto missing = filesystem.read("missing.txt");
     ASSERT_TRUE(missing);
     EXPECT_FALSE(*missing);
