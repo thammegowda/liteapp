@@ -1,4 +1,3 @@
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -11,6 +10,7 @@
 #include "liteapp/app/desktop.h"
 #include "liteapp/core/random.h"
 #include "liteapp/http/server.h"
+#include "liteapp/platform/openers.h"
 #include "liteapp/service/router.h"
 #include "liteapp/vfs/filesystem.h"
 
@@ -52,7 +52,7 @@ auto main() -> int {
         std::cerr << served.error().message << '\n';
         return 1;
     }
-    const auto headless = std::getenv("LITEAPP_SKELETON_NO_OPEN") != nullptr;
+    const auto headless = liteapp::platform::environment("LITEAPP_SKELETON_NO_OPEN").has_value();
     liteapp::DesktopApplicationOptions options;
     options.app_id = "liteapp.dual-host";
     options.title = "LiteApp dual-host skeleton";

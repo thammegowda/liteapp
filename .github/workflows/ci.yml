@@ -49,15 +49,6 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      - name: Install Ninja on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install ninja --no-progress --yes
-
-      - name: Configure MSVC environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Restore pinned test dependencies
         shell: bash
         run: |
@@ -67,22 +58,47 @@ jobs:
           git -C libs/googletest checkout "$GOOGLETEST_REVISION"
 
       - name: Configure LiteApp
+        if: runner.os != 'Windows'
         run: cmake --preset debug
 
+      - name: Configure LiteApp with MSVC
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-debug -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+
       - name: Build LiteApp
+        if: runner.os != 'Windows'
         run: cmake --build --preset debug --parallel
 
+      - name: Build LiteApp with MSVC
+        if: runner.os == 'Windows'
+        run: cmake --build build-debug --config Debug --parallel
+
       - name: Run C++ tests
+        if: runner.os != 'Windows'
         run: ctest --preset debug --output-on-failure
+
+      - name: Run C++ tests with MSVC
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build-debug -C Debug --output-on-failure
 
       - name: Run browser runtime tests
         run: node --test tests/browser/*.mjs
 
       - name: Configure dual-host skeleton
+        if: runner.os != 'Windows'
         run: cmake -S examples/dual-host -B build-dual-host -G Ninja -DCMAKE_BUILD_TYPE=Release
 
+      - name: Configure dual-host skeleton with MSVC
+        if: runner.os == 'Windows'
+        run: cmake -S examples/dual-host -B build-dual-host -G "Visual Studio 17 2022" -A x64
+
       - name: Build dual-host skeleton
+        if: runner.os != 'Windows'
         run: cmake --build build-dual-host --parallel
+
+      - name: Build dual-host skeleton with MSVC
+        if: runner.os == 'Windows'
+        run: cmake --build build-dual-host --config Release --parallel
 
       - name: Upload dual-host skeleton
         uses: actions/upload-artifact@v6
@@ -91,6 +107,7 @@ jobs:
           path: |
             build-dual-host/liteapp-dual-host
             build-dual-host/liteapp-dual-host.exe
+            build-dual-host/Release/liteapp-dual-host.exe
           if-no-files-found: error
 
   sanitizers:
