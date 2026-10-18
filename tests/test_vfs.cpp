@@ -88,6 +88,11 @@ TEST(VirtualFilesystem, LazilyReadsAndSharesEmbeddedFilesAcrossThreads) {
     EXPECT_EQ((**info).media_type, "text/html");
     EXPECT_EQ((**info).text_encoding, "utf-8");
     EXPECT_EQ((**info).size, contents.front()->size());
+    const auto module = filesystem.stat("module.mjs");
+    ASSERT_TRUE(module);
+    ASSERT_TRUE(*module);
+    EXPECT_EQ((**module).media_type, "text/javascript");
+    EXPECT_EQ((**module).text_encoding, "utf-8");
     const auto missing = filesystem.read("missing.txt");
     ASSERT_TRUE(missing);
     EXPECT_FALSE(*missing);

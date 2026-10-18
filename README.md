@@ -16,6 +16,56 @@ Applications include headers such as `liteapp/http/server.h` and link `liteapp::
 
 When copying `liteapp/` to another repository, copy an initialized working tree so `libs/json` and `libs/googletest` contain their sources. The new repository may then vendor those populated directories or register the same upstream URLs and commits as submodules.
 
+## Browser application runtime
+
+`web/liteapp.mjs` is an optional, dependency-free browser runtime for
+applications that communicate with services through Workers or MessagePorts.
+It is independent of the native C++ libraries and does not assume an
+application domain, schema, user interface, storage engine, or inference
+runtime.
+
+The first runtime layer provides:
+
+- versioned request, event, and cancellation envelopes;
+- request IDs and strict per-request event sequencing;
+- `AbortSignal` cancellation;
+- structured remote errors;
+- transferable binary payloads;
+- a generic service router; and
+- a transport for browser Workers and MessagePorts.
+
+Applications register their own method names, validate their own payloads, and
+own all business behavior:
+
+```js
+import {
+    MessageTransport,
+    RequestChannel,
+    ServiceRouter,
+} from './liteapp/web/liteapp.mjs';
+
+const ports = new MessageChannel();
+const client = new RequestChannel(new MessageTransport(ports.port1));
+const services = new ServiceRouter(new MessageTransport(ports.port2));
+
+services.register('documents.wordCount', ({payload, emit}) => {
+    emit('progress', {stage: 'counting'});
+    return {words: payload.text.trim().split(/\s+/).length};
+});
+
+const result = await client.request(
+    'documents.wordCount',
+    {text: 'A reusable application service'},
+    {onEvent: event => console.log(event.type, event.payload)},
+);
+```
+
+`MessageTransport` can wrap a `Worker`, `DedicatedWorkerGlobalScope`, or
+`MessagePort`. Construct it with `{owned: true}` only when disposing the
+transport should also terminate or close the wrapped endpoint. UI, storage,
+media, and static/native packaging remain separate optional modules; importing
+the channel runtime does not pull them in.
+
 ## Safety Baseline
 
 - C++23, RAII, value types, and explicit `std::expected` results.
@@ -23,6 +73,7 @@ When copying `liteapp/` to another repository, copy an initialized working tree 
 - OS CSPRNGs for capabilities: BCrypt, Security.framework, or `getrandom`.
 - Strict warnings as errors, control-flow/stack hardening, and optional ASan/UBSan.
 - A one-time launch query token exchanged for a required HttpOnly capability cookie.
+- Authenticated same-origin WebSockets with independent text/binary frame limits.
 - Host/Origin validation, CSP, cache prevention, and loopback-only local mode.
 - Liteapp-owned recursive filesystem events; symlink/reparse traversal is disabled.
 - cpp-httplib remains private behind Liteapp request/response types.
@@ -68,6 +119,15 @@ The bundled SQLite database is plaintext. Liteapp builds with in-memory temporar
 ## Embedded assets
 
 `liteapp_embed_archive()` creates a deterministic ZIP from an explicit file list and compiles it into a target. Apps open those bytes with `liteapp::vfs::FileSystem::from_zip()` and mount the immutable filesystem through `HttpServer::serve_static()`. ZIP contents are validated and expanded into shared memory on the first request; nothing is extracted to disk.
+
+## WebSockets
+
+`HttpServer::websocket()` registers a same-port WebSocket endpoint. Local-access
+Host, Origin, and capability-cookie checks run before the upgrade. The handler
+receives a `liteapp::WebSocket` with typed text/binary reads, serialized sends,
+configured message-size limits, and explicit close handling. Application
+protocols remain responsible for request IDs, sequencing, bounded work queues,
+and cancellation.
 
 `FileSystem::read()` returns immutable shared bytes plus normalized path, leaf name, extension, media type, optional text encoding, and byte size. `FileSystem::stat()` returns the same metadata without exposing archive-library types. Binary images, fonts, WebAssembly, and other raw assets use the same API as text resources.
 

@@ -5,7 +5,7 @@ liteapp_embed_archive(
     NAMESPACE liteapp::test_assets
     HEADER liteapp/test_assets.h
     ROOT "${CMAKE_CURRENT_SOURCE_DIR}/assets/vfs"
-    FILES index.html other.html
+    FILES index.html module.mjs other.html
 )
 
 add_executable(liteapp_tests

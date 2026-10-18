@@ -5,7 +5,9 @@
 #include <bit>
 #include <cctype>
 #include <cstdint>
+#include <fstream>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <utility>
 
@@ -164,6 +166,11 @@ struct HttpServer::Impl {
     std::shared_ptr<httplib::Server> server{std::make_shared<httplib::Server>()};
 };
 
+struct WebSocket::Impl {
+    httplib::ws::WebSocket* socket;
+    WebSocketOptions options;
+};
+
 struct RunningHttpServer::Impl {
     explicit Impl(std::shared_ptr<httplib::Server> implementation)
         : server{std::move(implementation)}, thread{[this] {
@@ -187,6 +194,40 @@ struct RunningHttpServer::Impl {
 };
 
 RunningHttpServer::RunningHttpServer(std::unique_ptr<Impl> impl) : impl_{std::move(impl)} {}
+WebSocket::WebSocket(std::unique_ptr<Impl> impl) : impl_{std::move(impl)} {}
+WebSocket::~WebSocket() = default;
+
+Result<std::optional<WebSocketMessage>> WebSocket::read() {
+    if (!impl_ || !impl_->socket->is_open()) return std::optional<WebSocketMessage>{};
+    std::string data;
+    const auto result = impl_->socket->read(data);
+    if (result == httplib::ws::ReadResult::Fail) return std::optional<WebSocketMessage>{};
+    const auto kind =
+        result == httplib::ws::ReadResult::Text ? WebSocketMessageKind::text : WebSocketMessageKind::binary;
+    const auto limit = kind == WebSocketMessageKind::text ? impl_->options.max_text_bytes : impl_->options.max_binary_bytes;
+    if (data.size() > limit) {
+        impl_->socket->close(httplib::ws::CloseStatus::MessageTooBig, "message exceeds configured limit");
+        return std::unexpected(Error{"message_too_big", "WebSocket message exceeds configured limit"});
+    }
+    return std::optional<WebSocketMessage>{WebSocketMessage{kind, std::move(data)}};
+}
+
+bool WebSocket::send_text(std::string_view data) {
+    return impl_ && impl_->socket->send(std::string(data));
+}
+
+bool WebSocket::send_binary(std::span<const std::byte> data) {
+    return impl_ && impl_->socket->send(reinterpret_cast<const char*>(data.data()), data.size());
+}
+
+void WebSocket::close(std::string_view reason) {
+    if (impl_) impl_->socket->close(httplib::ws::CloseStatus::Normal, std::string(reason));
+}
+
+bool WebSocket::is_open() const {
+    return impl_ && impl_->socket->is_open();
+}
+
 
 std::string Request::header(std::string_view name) const {
     for (const auto& [header_name, value] : headers) {
@@ -240,17 +281,15 @@ Result<HttpServer> HttpServer::create(ServerOptions options) {
 
     auto implementation = std::make_unique<Impl>();
     implementation->server->set_payload_max_length(options.max_body_bytes);
+    implementation->server->set_default_headers({
+        {"Cache-Control", "no-store"},
+        {"Content-Security-Policy", options.content_security_policy},
+        {"Referrer-Policy", "no-referrer"},
+        {"X-Content-Type-Options", "nosniff"},
+        {"X-Frame-Options", "DENY"},
+    });
     if (options.local_access) {
         auto launch_claimed = std::make_shared<std::atomic_bool>(false);
-        implementation->server->set_default_headers({
-            {"Cache-Control", "no-store"},
-            {"Content-Security-Policy",
-             "default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; "
-             "img-src 'self' data:; script-src 'self'; style-src 'self'"},
-            {"Referrer-Policy", "no-referrer"},
-            {"X-Content-Type-Options", "nosniff"},
-            {"X-Frame-Options", "DENY"},
-        });
         implementation->server->set_pre_routing_handler([options, launch_claimed](const auto& request, auto& response) {
             return enforce_local_access(options, *launch_claimed, request, response);
         });
@@ -293,6 +332,16 @@ void HttpServer::post(std::string path, Handler handler) {
     });
 }
 
+void HttpServer::websocket(std::string path, WebSocketHandler handler, WebSocketOptions options) {
+    impl_->server->WebSocket(
+        std::move(path),
+        [handler = std::move(handler), options](const auto& request, auto& socket) {
+            auto session =
+                WebSocket(std::make_unique<WebSocket::Impl>(WebSocket::Impl{.socket = &socket, .options = options}));
+            handler(make_request(request), session);
+        });
+}
+
 Result<void> HttpServer::serve_static(const std::filesystem::path& root) {
     std::error_code error;
     if (!std::filesystem::is_directory(root, error)) {
@@ -310,6 +359,46 @@ Result<void> HttpServer::serve_static(vfs::FileSystem filesystem) {
                                                 : std::string_view{request.path}.substr(1);
         apply_response(response, virtual_file_response(filesystem, path));
     });
+    return {};
+}
+
+Result<void> HttpServer::serve_files(std::span<const StaticFile> files) {
+    std::set<std::string, std::less<>> routes;
+    for (const auto& file : files) {
+        if (file.route.empty() || file.route.front() != '/' || file.route.find_first_of("?#") != std::string::npos ||
+            !routes.emplace(file.route).second) {
+            return std::unexpected(Error{"invalid_assets", "development asset routes must be unique absolute paths"});
+        }
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(file.path, error)) {
+            return std::unexpected(
+                Error{"invalid_assets", "development asset does not exist: " + file.path.string()});
+        }
+        if (file.content_type.empty()) {
+            return std::unexpected(Error{"invalid_assets", "development asset content type must not be empty"});
+        }
+        impl_->server->Get(file.route, [file](const auto&, auto& response) {
+            constexpr std::uintmax_t MAX_DEVELOPMENT_ASSET_BYTES = 64U * 1024U * 1024U;
+            std::error_code size_error;
+            const auto size = std::filesystem::file_size(file.path, size_error);
+            if (size_error || size > MAX_DEVELOPMENT_ASSET_BYTES) {
+                response.status = size_error ? 404 : 413;
+                return;
+            }
+            std::ifstream input(file.path, std::ios::binary);
+            if (!input) {
+                response.status = 404;
+                return;
+            }
+            std::string body(size, '\0');
+            input.read(body.data(), static_cast<std::streamsize>(body.size()));
+            if (!input && !body.empty()) {
+                response.status = 500;
+                return;
+            }
+            response.set_content(std::move(body), file.content_type);
+        });
+    }
     return {};
 }
 
@@ -366,11 +455,11 @@ void HttpServer::wait_until_ready() const {
 }
 
 std::string HttpServer::local_launch_url(int port) const {
-    if (!options_.local_access || port <= 0 || port > 65535) {
-        return {};
-    }
-    return "http://" + options_.host + ':' + std::to_string(port) + "/?" +
-           options_.local_access->query_parameter + '=' + options_.local_access->token;
+    if (port <= 0 || port > 65535) return {};
+    auto result = "http://" + options_.host + ':' + std::to_string(port) + '/';
+    if (options_.local_access)
+        result += '?' + options_.local_access->query_parameter + '=' + options_.local_access->token;
+    return result;
 }
 
 }  // namespace liteapp

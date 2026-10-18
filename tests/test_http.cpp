@@ -163,6 +163,50 @@ TEST(FrameworkHttp, RejectsUnsafeLocalConfigurationAndSpoofedOrigin) {
     server.stop();
 }
 
+TEST(FrameworkHttp, AllowsExplicitUnauthenticatedLoopbackDevelopment) {
+    TemporaryDirectory temporary;
+    const auto script = temporary.path / "app.js";
+    std::ofstream{script} << "export const version = 1;\n";
+    auto created = liteapp::HttpServer::create(liteapp::ServerOptions{
+        .host = "127.0.0.1",
+        .port = 0,
+        .max_body_bytes = 1024,
+        .local_access = std::nullopt,
+    });
+    ASSERT_TRUE(created);
+    auto server = std::move(*created);
+    server.get("/health", [](const liteapp::Request&) { return liteapp::Response::text("ok"); });
+    const std::array files{
+        liteapp::StaticFile{.route = "/app.js", .path = script, .content_type = "text/javascript; charset=utf-8"},
+    };
+    ASSERT_TRUE(server.serve_files(files));
+    const auto bound = server.bind();
+    ASSERT_TRUE(bound);
+    std::jthread server_thread{[&server] { static_cast<void>(server.listen_after_bind()); }};
+    server.wait_until_ready();
+
+    httplib::Client client{"127.0.0.1", *bound};
+    const auto response = client.Get("/health");
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200);
+    EXPECT_EQ(response->body, "ok");
+    EXPECT_EQ(response->get_header_value("Cache-Control"), "no-store");
+    EXPECT_EQ(response->get_header_value("X-Content-Type-Options"), "nosniff");
+    EXPECT_EQ(server.local_launch_url(*bound), "http://127.0.0.1:" + std::to_string(*bound) + "/");
+    const auto first = client.Get("/app.js");
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->status, 200);
+    EXPECT_EQ(first->body, "export const version = 1;\n");
+    EXPECT_EQ(first->get_header_value("Content-Type"), "text/javascript; charset=utf-8");
+    std::ofstream{script, std::ios::trunc} << "export const version = 2;\n";
+    const auto second = client.Get("/app.js");
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->status, 200);
+    EXPECT_EQ(second->body, "export const version = 2;\n");
+
+    server.stop();
+}
+
 TEST(FrameworkHttp, ServesAuthenticatedVirtualFilesAndFallback) {
     auto created = liteapp::HttpServer::create(liteapp::ServerOptions{
         .host = "127.0.0.1",

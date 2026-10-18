@@ -46,7 +46,7 @@ FileInfo file_info(std::string path, std::size_t size) {
     std::optional<std::string> encoding;
     if (extension == ".html") media_type = "text/html";
     else if (extension == ".css") media_type = "text/css";
-    else if (extension == ".js") media_type = "text/javascript";
+    else if (extension == ".js" || extension == ".mjs") media_type = "text/javascript";
     else if (extension == ".json") media_type = "application/json";
     else if (extension == ".svg") media_type = "image/svg+xml";
     else if (extension == ".txt") media_type = "text/plain";
@@ -56,7 +56,8 @@ FileInfo file_info(std::string path, std::size_t size) {
     else if (extension == ".ico") media_type = "image/x-icon";
     else if (extension == ".woff2") media_type = "font/woff2";
     else if (extension == ".wasm") media_type = "application/wasm";
-    if (media_type.starts_with("text/") || extension == ".js" || extension == ".json") {
+    if (media_type.starts_with("text/") || extension == ".js" || extension == ".mjs" ||
+        extension == ".json") {
         encoding = "utf-8";
     }
     return FileInfo{

@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -58,6 +59,44 @@ struct Response {
 
 using Handler = std::function<Response(const Request&)>;
 
+enum class WebSocketMessageKind {
+    text,
+    binary,
+};
+
+struct WebSocketMessage {
+    WebSocketMessageKind kind;
+    std::string data;
+};
+
+struct WebSocketOptions {
+    std::size_t max_text_bytes{1024U * 1024U};
+    std::size_t max_binary_bytes{1024U * 1024U};
+};
+
+class WebSocket {
+public:
+    ~WebSocket();
+    WebSocket(const WebSocket&) = delete;
+    WebSocket& operator=(const WebSocket&) = delete;
+
+    [[nodiscard]] Result<std::optional<WebSocketMessage>> read();
+    [[nodiscard]] bool send_text(std::string_view data);
+    [[nodiscard]] bool send_binary(std::span<const std::byte> data);
+    void close(std::string_view reason = {});
+    [[nodiscard]] bool is_open() const;
+
+private:
+    friend class HttpServer;
+    struct Impl;
+
+    explicit WebSocket(std::unique_ptr<Impl> impl);
+
+    std::unique_ptr<Impl> impl_;
+};
+
+using WebSocketHandler = std::function<void(const Request&, WebSocket&)>;
+
 struct LocalAccess {
     std::string token;
     std::string cookie_name{"copilot_chats_access"};
@@ -69,6 +108,15 @@ struct ServerOptions {
     int port{0};
     std::size_t max_body_bytes{8U * 1024U * 1024U};
     std::optional<LocalAccess> local_access;
+    std::string content_security_policy{
+        "default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; "
+        "img-src 'self' data:; script-src 'self'; style-src 'self'"};
+};
+
+struct StaticFile {
+    std::string route;
+    std::filesystem::path path;
+    std::string content_type;
 };
 
 class HttpServer {
@@ -83,8 +131,10 @@ public:
 
     void get(std::string path, Handler handler);
     void post(std::string path, Handler handler);
+    void websocket(std::string path, WebSocketHandler handler, WebSocketOptions options = {});
     [[nodiscard]] Result<void> serve_static(const std::filesystem::path& root);
     [[nodiscard]] Result<void> serve_static(vfs::FileSystem filesystem);
+    [[nodiscard]] Result<void> serve_files(std::span<const StaticFile> files);
     void serve_file(std::string route, vfs::FileSystem filesystem, std::string path);
     [[nodiscard]] Result<int> bind();
     [[nodiscard]] Result<RunningHttpServer> start();
