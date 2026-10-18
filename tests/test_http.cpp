@@ -43,16 +43,16 @@ TEST(FrameworkApp, RunsHeadlessDesktopLifecycleCallbacks) {
     server.get("/health", [](const liteapp::Request&) { return liteapp::Response::text("ok"); });
     bool started = false;
     bool ready = false;
-    const auto ran = liteapp::run_desktop_application(server, {
-        .app_id = "liteapp.test",
-        .title = "LiteApp test",
-        .development = true,
-        .on_ready = [&](std::string_view url) {
-            ready = url.starts_with("http://127.0.0.1:");
-            server.stop();
-        },
-        .on_started = [&] { started = true; },
-    });
+    liteapp::DesktopApplicationOptions options;
+    options.app_id = "liteapp.test";
+    options.title = "LiteApp test";
+    options.development = true;
+    options.on_ready = [&](std::string_view url) {
+        ready = url.starts_with("http://127.0.0.1:");
+        server.stop();
+    };
+    options.on_started = [&] { started = true; };
+    const auto ran = liteapp::run_desktop_application(server, std::move(options));
     ASSERT_TRUE(ran);
     EXPECT_TRUE(started);
     EXPECT_TRUE(ready);

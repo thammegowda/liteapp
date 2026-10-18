@@ -53,13 +53,13 @@ auto main() -> int {
         return 1;
     }
     const auto headless = std::getenv("LITEAPP_SKELETON_NO_OPEN") != nullptr;
-    const auto ran = liteapp::run_desktop_application(server, {
-        .app_id = "liteapp.dual-host",
-        .title = "LiteApp dual-host skeleton",
-        .profile_directory = std::filesystem::temp_directory_path() / "liteapp-dual-host",
-        .development = headless,
-        .on_ready = [](std::string_view url) { std::cout << url << std::endl; },
-    });
+    liteapp::DesktopApplicationOptions options;
+    options.app_id = "liteapp.dual-host";
+    options.title = "LiteApp dual-host skeleton";
+    options.profile_directory = std::filesystem::temp_directory_path() / "liteapp-dual-host";
+    options.development = headless;
+    options.on_ready = [](std::string_view url) { std::cout << url << std::endl; };
+    const auto ran = liteapp::run_desktop_application(server, std::move(options));
     if (!ran) {
         std::cerr << ran.error().message << '\n';
         return 1;

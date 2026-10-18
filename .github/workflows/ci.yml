@@ -24,7 +24,7 @@ jobs:
       matrix:
         os:
           - ubuntu-24.04
-          - macos-15
+          - macos-26
           - windows-2022
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -53,6 +53,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: choco install ninja --no-progress --yes
+
+      - name: Configure MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Restore pinned test dependencies
         shell: bash

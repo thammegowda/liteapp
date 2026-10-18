@@ -195,14 +195,16 @@ void ServiceRouter::run(WebSocket& socket) const {
             break;
         }
         if (active.contains(id)) {
-            RequestState duplicate{.id = id};
+            RequestState duplicate;
+            duplicate.id = id;
             connection->send_event(
                 duplicate, "error",
                 {{"code", "duplicate_request"}, {"message", "Request ID is already active"}});
             continue;
         }
         if (active.size() >= impl_->options.max_active_requests) {
-            RequestState saturated{.id = id};
+            RequestState saturated;
+            saturated.id = id;
             connection->send_event(
                 saturated, "error",
                 {{"code", "too_many_requests"}, {"message", "Too many service requests are active"}});
@@ -212,7 +214,8 @@ void ServiceRouter::run(WebSocket& socket) const {
         const auto found = impl_->handlers.find(method);
         auto handler = found == impl_->handlers.end() ? impl_->fallback : found->second;
         if (!handler) {
-            RequestState unknown{.id = id};
+            RequestState unknown;
+            unknown.id = id;
             connection->send_event(
                 unknown, "error",
                 {{"code", "unknown_method"}, {"message", "Unknown service method: " + method}});
