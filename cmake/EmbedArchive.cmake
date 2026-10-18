@@ -71,9 +71,27 @@ macro(liteapp_embed_archive)
     set_source_files_properties("${resource}" PROPERTIES OBJECT_DEPENDS "${archive}")
 
     if(WIN32)
-        add_library(${ARG_TARGET}_resource OBJECT "${resource}")
         add_library(${ARG_TARGET} STATIC "${source}")
-        target_link_libraries(${ARG_TARGET} INTERFACE $<TARGET_OBJECTS:${ARG_TARGET}_resource>)
+        set(compiled_resource "${generated_root}/${ARG_TARGET}.res")
+        if(MSVC)
+            add_custom_command(
+                OUTPUT "${compiled_resource}"
+                COMMAND "${CMAKE_RC_COMPILER}" /nologo "/fo${compiled_resource}" "${resource}"
+                DEPENDS "${resource}" "${archive}"
+                VERBATIM
+            )
+        else()
+            add_custom_command(
+                OUTPUT "${compiled_resource}"
+                COMMAND "${CMAKE_RC_COMPILER}" -O coff -i "${resource}" -o "${compiled_resource}"
+                DEPENDS "${resource}" "${archive}"
+                VERBATIM
+            )
+        endif()
+        add_custom_target(${ARG_TARGET}_resource DEPENDS "${compiled_resource}")
+        add_dependencies(${ARG_TARGET} ${ARG_TARGET}_resource)
+        target_link_libraries(${ARG_TARGET} INTERFACE "${compiled_resource}")
+        set_property(TARGET ${ARG_TARGET} APPEND PROPERTY INTERFACE_LINK_DEPENDS "${compiled_resource}")
     else()
         add_library(${ARG_TARGET} OBJECT "${source}" "${resource}")
     endif()
