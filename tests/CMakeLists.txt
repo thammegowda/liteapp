@@ -23,10 +23,8 @@ target_link_libraries(liteapp_tests
         liteapp::app
         liteapp::db
         liteapp::fs
-        liteapp::http
         liteapp::platform
         liteapp::service
-        liteapp::vfs
         liteapp::httplib
         liteapp_test_assets
 )

@@ -1,0 +1,10 @@
+#pragma once
+
+#include <cstddef>
+#include <span>
+
+namespace @LITEAPP_EMBED_NAMESPACE@ {
+
+[[nodiscard]] auto archive() noexcept -> std::span<const std::byte>;
+
+} // namespace @LITEAPP_EMBED_NAMESPACE@

@@ -142,7 +142,14 @@ The bundled SQLite database is plaintext. Liteapp builds with in-memory temporar
 
 ## Embedded assets
 
-`liteapp_embed_archive()` creates a deterministic ZIP from an explicit file list and compiles it into a target. Apps open those bytes with `liteapp::vfs::FileSystem::from_zip()` and mount the immutable filesystem through `HttpServer::serve_static()`. ZIP contents are validated and expanded into shared memory on the first request; nothing is extracted to disk.
+`liteapp_embed_archive()` creates a deterministic ZIP from an explicit file list
+and links it into a target as a native binary resource. macOS and ELF platforms
+use assembler `.incbin`; Windows uses a target-named `RCDATA` resource. The C++
+compiler sees only a small generated `std::span` accessor and never parses asset
+byte initializers. Apps open those bytes with
+`liteapp::vfs::FileSystem::from_zip()` and mount the immutable filesystem through
+`HttpServer::serve_static()`. ZIP contents are validated and expanded into
+shared memory on the first request; nothing is extracted to disk.
 
 Development servers can use `HttpServer::serve_manifest(root, manifest)` to
 mount an explicit newline-separated asset list. Routes are validated and MIME
