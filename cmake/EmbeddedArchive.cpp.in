@@ -14,7 +14,7 @@ namespace @LITEAPP_EMBED_NAMESPACE@ {
 auto archive() noexcept -> std::span<const std::byte> {
 #ifdef _WIN32
     const auto module = GetModuleHandleW(nullptr);
-    const auto resource = FindResourceA(module, "@LITEAPP_EMBED_RESOURCE@", RT_RCDATA);
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(@LITEAPP_EMBED_RESOURCE_ID@), RT_RCDATA);
     if (!resource) return {};
     const auto loaded = LoadResource(module, resource);
     const auto* bytes = static_cast<const std::byte*>(LockResource(loaded));
