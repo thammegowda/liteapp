@@ -1,8 +1,9 @@
 import {RequestChannel} from '../transport/channel.mjs';
+import {connectAndroid} from '../transport/android-transport.mjs';
 import {MessageTransport} from '../transport/message-transport.mjs';
 import {connectWebSocket} from '../transport/websocket-transport.mjs';
 
-const VARIANTS = new Set(['desktop', 'wasm', 'webgpu']);
+const VARIANTS = new Set(['android', 'desktop', 'wasm', 'webgpu']);
 
 export async function createVariantClient({
     variant,
@@ -11,10 +12,14 @@ export async function createVariantClient({
     WebSocketImpl = globalThis.WebSocket,
     WorkerImpl = globalThis.Worker,
     webGpu = globalThis.navigator?.gpu,
+    androidTarget = globalThis,
+    androidTimeoutMs = 15000,
 } = {}) {
     if (!VARIANTS.has(variant)) throw new Error(`Unknown LiteApp host variant: ${String(variant)}`);
     let transport;
-    if (variant === 'desktop') {
+    if (variant === 'android') {
+        transport = await connectAndroid({target: androidTarget, timeoutMs: androidTimeoutMs});
+    } else if (variant === 'desktop') {
         if (!desktopUrl) throw new Error('The desktop variant requires a WebSocket URL');
         transport = await connectWebSocket(desktopUrl, {WebSocketImpl});
     } else {

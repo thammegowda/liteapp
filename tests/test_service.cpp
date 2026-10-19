@@ -2,8 +2,10 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <httplib.h>
@@ -75,4 +77,49 @@ TEST(FrameworkService, RoutesProgressCompletionCancellationAndBinaryFrames) {
 
     socket.close();
     server.stop();
+}
+
+TEST(FrameworkService, InProcessSessionUsesTheSameProtocol) {
+    liteapp::ServiceRouter router;
+    router.register_method("math.double", [](liteapp::ServiceContext& context) -> liteapp::Result<Json> {
+        static_cast<void>(context.emit("progress", {{"value", context.payload().value("value", 0)}}));
+        return Json{{"value", context.payload().value("value", 0) * 2}};
+    });
+    std::atomic_size_t binary_bytes{0};
+    router.set_binary_handler([&](std::span<const std::byte> bytes) { binary_bytes += bytes.size(); });
+    std::mutex messages_mutex;
+    std::vector<Json> messages;
+    std::string closed;
+    auto session = router.open({
+        .send_text = [&](std::string_view message) {
+            std::scoped_lock lock{messages_mutex};
+            messages.push_back(Json::parse(message));
+            return true;
+        },
+        .send_binary = [](std::span<const std::byte>) { return true; },
+        .close = [&](std::string_view reason) { closed = reason; },
+    });
+    ASSERT_TRUE(session->receive_text(Json{
+        {"version", 1}, {"kind", "request"}, {"id", "double"}, {"method", "math.double"},
+        {"payload", {{"value", 5}}},
+    }.dump()));
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{messages_mutex};
+            if (messages.size() == 2) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    {
+        std::scoped_lock lock{messages_mutex};
+        ASSERT_EQ(messages.size(), 2);
+        EXPECT_EQ(messages[0]["type"], "progress");
+        EXPECT_EQ(messages[1]["type"], "completed");
+        EXPECT_EQ(messages[1]["payload"]["value"], 10);
+    }
+    constexpr std::array payload{std::byte{1}, std::byte{2}};
+    EXPECT_TRUE(session->receive_binary(payload));
+    EXPECT_EQ(binary_bytes.load(), payload.size());
+    EXPECT_FALSE(session->receive_text("{invalid"));
+    EXPECT_EQ(closed, "invalid service envelope");
 }

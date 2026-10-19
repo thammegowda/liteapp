@@ -105,83 +105,92 @@ target_include_directories(liteapp_vfs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(liteapp_vfs PUBLIC liteapp::core PRIVATE liteapp_miniz)
 liteapp_harden(liteapp_vfs)
 
-add_library(liteapp_http
-    src/liteapp/http/server.cpp
-)
-add_library(liteapp::http ALIAS liteapp_http)
-target_include_directories(liteapp_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(liteapp_http PUBLIC liteapp::core liteapp::vfs PRIVATE liteapp::httplib)
-liteapp_harden(liteapp_http)
-
-set(LITEAPP_NATIVE_WATCHER_SOURCE)
-if(WIN32)
-    set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_windows.cpp)
-elseif(APPLE)
-    set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_macos.cpp)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_linux.cpp)
-else()
-    message(FATAL_ERROR "Liteapp filesystem watching currently supports Windows, macOS, and Linux")
-endif()
-add_library(liteapp_fs
-    src/liteapp/fs/watcher.cpp
-    ${LITEAPP_NATIVE_WATCHER_SOURCE}
-)
-add_library(liteapp::fs ALIAS liteapp_fs)
-target_include_directories(liteapp_fs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(liteapp_fs PUBLIC liteapp::core PRIVATE Threads::Threads)
-if(APPLE)
-    target_link_libraries(liteapp_fs PRIVATE "-framework CoreFoundation" "-framework CoreServices")
-endif()
-liteapp_harden(liteapp_fs)
-
-if(WIN32)
-    set(LITEAPP_WEBVIEW2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/libs/webview2")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
-        set(LITEAPP_WEBVIEW2_ROOT "${LITEAPP_WEBVIEW2_ROOT}/arm64")
-    endif()
-    if(NOT EXISTS "${LITEAPP_WEBVIEW2_ROOT}/WebView2Loader.dll")
-        message(FATAL_ERROR
-            "Missing WebView2Loader.dll for ${CMAKE_SYSTEM_PROCESSOR} under "
-            "${LITEAPP_WEBVIEW2_ROOT}")
-    endif()
-    liteapp_embed_archive(
-        TARGET liteapp_webview2_loader
-        NAMESPACE liteapp::embedded_webview2
-        HEADER liteapp/embedded_webview2.h
-        ROOT "${LITEAPP_WEBVIEW2_ROOT}"
-        FILES WebView2Loader.dll
+if(NOT ANDROID)
+    add_library(liteapp_http
+        src/liteapp/http/server.cpp
     )
-    set(LITEAPP_SINGLE_INSTANCE_SOURCE src/liteapp/platform/single_instance_windows.cpp)
-    set(LITEAPP_WEBVIEW_WINDOW_SOURCE src/liteapp/platform/webview_window_windows.cpp)
-else()
-    set(LITEAPP_SINGLE_INSTANCE_SOURCE src/liteapp/platform/single_instance.cpp)
-    set(LITEAPP_WEBVIEW_WINDOW_SOURCE src/liteapp/platform/webview_window.cpp)
+    add_library(liteapp::http ALIAS liteapp_http)
+    target_include_directories(liteapp_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(liteapp_http PUBLIC liteapp::core liteapp::vfs PRIVATE liteapp::httplib)
+    liteapp_harden(liteapp_http)
 endif()
-add_library(liteapp_platform
-    src/liteapp/platform/openers.cpp
-    ${LITEAPP_SINGLE_INSTANCE_SOURCE}
-    ${LITEAPP_WEBVIEW_WINDOW_SOURCE}
-)
-add_library(liteapp::platform ALIAS liteapp_platform)
-target_include_directories(liteapp_platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(liteapp_platform PUBLIC liteapp::core)
-if(WIN32)
-    target_include_directories(liteapp_platform SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs/webview2")
-    target_link_libraries(liteapp_platform PRIVATE liteapp::vfs liteapp_webview2_loader ole32 shell32 uuid)
-endif()
-liteapp_harden(liteapp_platform)
 
-add_library(liteapp_app src/liteapp/app/desktop.cpp)
-add_library(liteapp::app ALIAS liteapp_app)
-target_include_directories(liteapp_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(liteapp_app PUBLIC liteapp::core liteapp::http liteapp::platform)
-liteapp_harden(liteapp_app)
+if(NOT ANDROID)
+    set(LITEAPP_NATIVE_WATCHER_SOURCE)
+    if(WIN32)
+        set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_windows.cpp)
+    elseif(APPLE)
+        set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_macos.cpp)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(LITEAPP_NATIVE_WATCHER_SOURCE src/liteapp/fs/watcher_linux.cpp)
+    else()
+        message(FATAL_ERROR "Liteapp filesystem watching currently supports Windows, macOS, and Linux")
+    endif()
+    add_library(liteapp_fs
+        src/liteapp/fs/watcher.cpp
+        ${LITEAPP_NATIVE_WATCHER_SOURCE}
+    )
+    add_library(liteapp::fs ALIAS liteapp_fs)
+    target_include_directories(liteapp_fs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(liteapp_fs PUBLIC liteapp::core PRIVATE Threads::Threads)
+    if(APPLE)
+        target_link_libraries(liteapp_fs PRIVATE "-framework CoreFoundation" "-framework CoreServices")
+    endif()
+    liteapp_harden(liteapp_fs)
+
+    if(WIN32)
+        set(LITEAPP_WEBVIEW2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/libs/webview2")
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+            set(LITEAPP_WEBVIEW2_ROOT "${LITEAPP_WEBVIEW2_ROOT}/arm64")
+        endif()
+        if(NOT EXISTS "${LITEAPP_WEBVIEW2_ROOT}/WebView2Loader.dll")
+            message(FATAL_ERROR
+                "Missing WebView2Loader.dll for ${CMAKE_SYSTEM_PROCESSOR} under "
+                "${LITEAPP_WEBVIEW2_ROOT}")
+        endif()
+        liteapp_embed_archive(
+            TARGET liteapp_webview2_loader
+            NAMESPACE liteapp::embedded_webview2
+            HEADER liteapp/embedded_webview2.h
+            ROOT "${LITEAPP_WEBVIEW2_ROOT}"
+            FILES WebView2Loader.dll
+        )
+        set(LITEAPP_SINGLE_INSTANCE_SOURCE src/liteapp/platform/single_instance_windows.cpp)
+        set(LITEAPP_WEBVIEW_WINDOW_SOURCE src/liteapp/platform/webview_window_windows.cpp)
+    else()
+        set(LITEAPP_SINGLE_INSTANCE_SOURCE src/liteapp/platform/single_instance.cpp)
+        set(LITEAPP_WEBVIEW_WINDOW_SOURCE src/liteapp/platform/webview_window.cpp)
+    endif()
+    add_library(liteapp_platform
+        src/liteapp/platform/openers.cpp
+        ${LITEAPP_SINGLE_INSTANCE_SOURCE}
+        ${LITEAPP_WEBVIEW_WINDOW_SOURCE}
+    )
+    add_library(liteapp::platform ALIAS liteapp_platform)
+    target_include_directories(liteapp_platform PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(liteapp_platform PUBLIC liteapp::core)
+    if(WIN32)
+        target_include_directories(liteapp_platform SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libs/webview2")
+        target_link_libraries(liteapp_platform PRIVATE liteapp::vfs liteapp_webview2_loader ole32 shell32 uuid)
+    endif()
+    liteapp_harden(liteapp_platform)
+
+    add_library(liteapp_app src/liteapp/app/desktop.cpp)
+    add_library(liteapp::app ALIAS liteapp_app)
+    target_include_directories(liteapp_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(liteapp_app PUBLIC liteapp::core liteapp::http liteapp::platform)
+    liteapp_harden(liteapp_app)
+endif()
 
 add_library(liteapp_service src/liteapp/service/router.cpp)
 add_library(liteapp::service ALIAS liteapp_service)
 target_include_directories(liteapp_service PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(liteapp_service PUBLIC liteapp::core liteapp::http liteapp::json)
+target_link_libraries(liteapp_service PUBLIC liteapp::core liteapp::json)
+if(ANDROID)
+    target_compile_definitions(liteapp_service PRIVATE LITEAPP_IN_PROCESS_ONLY=1)
+else()
+    target_link_libraries(liteapp_service PUBLIC liteapp::http)
+endif()
 liteapp_harden(liteapp_service)
 
 if(LITEAPP_BUILD_TESTS)

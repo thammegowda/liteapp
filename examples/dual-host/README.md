@@ -1,6 +1,6 @@
 # LiteApp dual-host skeleton
 
-This skeleton shows one shared browser UI running against three host variants:
+This skeleton shows one shared browser UI running against three executable host variants:
 
 - `desktop`: a native C++ HTTP/WebSocket application;
 - `wasm`: a dedicated Worker where an application can load its Wasm module; and
@@ -9,6 +9,10 @@ This skeleton shows one shared browser UI running against three host variants:
 All variants expose the same versioned LiteApp request/event protocol. Domain
 methods, schemas, Wasm bindings, GPU kernels, and UI design belong to the
 application.
+
+The browser runtime also provides an `android` variant for an origin-scoped
+WebMessage port transferred by an Android WebView host. It is not runnable in
+this desktop skeleton because the native Android shell owns that port.
 
 Build the native skeleton from the LiteApp repository:
 

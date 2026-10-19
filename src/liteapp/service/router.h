@@ -1,11 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <span>
 #include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -13,9 +13,23 @@
 #include <nlohmann/json.hpp>
 
 #include "liteapp/core/result.h"
-#include "liteapp/http/server.h"
-
 namespace liteapp {
+
+class WebSocket;
+
+class ServiceStopToken {
+public:
+    ServiceStopToken() = default;
+    explicit ServiceStopToken(std::shared_ptr<const std::atomic_bool> stopped)
+        : stopped_{std::move(stopped)} {}
+
+    [[nodiscard]] bool stop_requested() const noexcept {
+        return stopped_ && stopped_->load();
+    }
+
+private:
+    std::shared_ptr<const std::atomic_bool> stopped_;
+};
 
 class ServiceFailure : public std::runtime_error {
 public:
@@ -31,13 +45,14 @@ public:
     [[nodiscard]] std::string_view method() const noexcept;
     [[nodiscard]] const nlohmann::json& payload() const noexcept;
     [[nodiscard]] bool cancelled() const noexcept;
-    [[nodiscard]] std::stop_token stop_token() const noexcept;
+    [[nodiscard]] ServiceStopToken stop_token() const noexcept;
     [[nodiscard]] bool emit(std::string_view type, nlohmann::json payload = nlohmann::json::object()) const;
     [[nodiscard]] bool fail(Error error) const;
     [[nodiscard]] bool send_binary(std::span<const std::byte> data) const;
 
 private:
     friend class ServiceRouter;
+    friend class ServiceSession;
     struct Impl;
 
     explicit ServiceContext(std::shared_ptr<Impl> impl);
@@ -54,6 +69,33 @@ struct ServiceRouterOptions {
     std::size_t max_method_bytes{128};
 };
 
+struct ServiceSessionCallbacks {
+    std::function<bool(std::string_view)> send_text;
+    std::function<bool(std::span<const std::byte>)> send_binary;
+    std::function<void(std::string_view)> close;
+};
+
+class ServiceSession {
+public:
+    ~ServiceSession();
+    ServiceSession(ServiceSession&&) noexcept;
+    ServiceSession& operator=(ServiceSession&&) noexcept;
+    ServiceSession(const ServiceSession&) = delete;
+    ServiceSession& operator=(const ServiceSession&) = delete;
+
+    [[nodiscard]] bool receive_text(std::string_view message);
+    [[nodiscard]] bool receive_binary(std::span<const std::byte> data);
+    void close();
+
+private:
+    friend class ServiceRouter;
+    struct Impl;
+
+    explicit ServiceSession(std::unique_ptr<Impl> impl);
+
+    std::unique_ptr<Impl> impl_;
+};
+
 class ServiceRouter {
 public:
     explicit ServiceRouter(ServiceRouterOptions options = {});
@@ -66,6 +108,7 @@ public:
     void register_method(std::string method, ServiceHandler handler);
     void set_fallback(ServiceHandler handler);
     void set_binary_handler(BinaryServiceHandler handler);
+    [[nodiscard]] std::unique_ptr<ServiceSession> open(ServiceSessionCallbacks callbacks) const;
     void run(WebSocket& socket) const;
 
 private:

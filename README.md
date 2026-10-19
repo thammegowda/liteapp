@@ -2,16 +2,49 @@
 
 [![LiteApp CI](https://github.com/thammegowda/liteapp/actions/workflows/ci.yml/badge.svg)](https://github.com/thammegowda/liteapp/actions/workflows/ci.yml)
 
-`liteapp` is a small C++23 SDK for applications that use a local HTTP backend and an HTML/CSS/JavaScript frontend. The directory is intentionally self-contained so it can be copied into another repository.
+LiteApp is a small C++23 and JavaScript SDK for local applications that use a
+browser interface without turning into a hosted web service. An application can
+ship one HTML/CSS/JavaScript UI, keep its data and compute on the device, and
+connect that UI to native desktop code, Wasm/WebGPU workers, or an Android
+WebView through the same request/event protocol.
+
+The SDK handles the host plumbing that tends to grow around this architecture:
+secure loopback bootstrap on desktop, deterministic embedded assets,
+request/event/cancellation channels, binary streaming, in-process native
+service sessions, Android WebMessage transport, and lifecycle cleanup. The
+application keeps ownership of its UI, service names, schemas, storage model,
+and domain logic.
+
+LiteApp has no frontend framework dependency, no daemon, and no required cloud
+component. The directory is intentionally self-contained so it can be vendored
+or added as a submodule without introducing a package manager into the deployed
+application.
+
+## One UI, several execution hosts
+
+| Host | UI delivery | Service transport | Typical execution |
+|---|---|---|---|
+| Native desktop | Embedded deterministic archive or explicit development manifest | Authenticated same-origin WebSocket | C++ services in the application process |
+| Wasm / WebGPU | Static web assets | `MessageTransport` over a dedicated Worker or MessagePort | Wasm, WebGPU, or JavaScript worker services |
+| Android | Assets packaged in the APK and loaded from a trusted WebView origin | `AndroidTransport` over an origin-scoped WebMessage port | Kotlin/JNI services or LiteApp's in-process C++ `ServiceSession` |
+
+Every host uses the same versioned request, progress-event, completion,
+structured-error, cancellation, and binary-frame model. Host adapters can
+change without forcing UI components to learn a second application API. The
+[`examples/dual-host`](examples/dual-host/) skeleton demonstrates the desktop,
+Wasm, and WebGPU sides of that boundary; Android uses the same browser channel
+with a port supplied by its native WebView shell.
 
 ## Layout
 
 ```text
 liteapp/
-  cmake/          compiler hardening and toolchains
-  libs/           pinned third-party dependencies
-  src/liteapp/    SDK code; paths match namespaces
-  tests/          SDK security and behavior tests
+  cmake/          compiler hardening, resource embedding, and toolchains
+  examples/       shared-UI host skeletons
+  libs/           pinned native dependencies
+  src/liteapp/    C++ SDK; paths match namespaces
+  tests/          native and browser security/behavior tests
+  web/            dependency-free browser channel and host transports
 ```
 
 Applications include headers such as `liteapp/http/server.h` and link `liteapp::core`, `liteapp::db`, `liteapp::fs`, `liteapp::http`, `liteapp::platform`, or `liteapp::vfs`.
@@ -21,15 +54,21 @@ Native desktop applications can link `liteapp::app` and call
 bind/start/readiness, optional WebView or browser launch, profile paths, and
 server shutdown/wait behavior.
 
-When copying `liteapp/` to another repository, copy an initialized working tree so `libs/json` and `libs/googletest` contain their sources. The new repository may then vendor those populated directories or register the same upstream URLs and commits as submodules.
+Android applications use the core, VFS, and in-process service targets without
+building the desktop HTTP, filesystem-watcher, window, or application targets.
+
+When copying `liteapp/` to another repository, copy an initialized working tree
+so `libs/json` and `libs/googletest` contain their sources. A containing project
+may instead provide its existing `nlohmann_json::nlohmann_json` target and
+GoogleTest source.
 
 ## Browser application runtime
 
-`web/liteapp.mjs` is an optional, dependency-free browser runtime for
-applications that communicate with services through Workers or MessagePorts.
-It is independent of the native C++ libraries and does not assume an
-application domain, schema, user interface, storage engine, or inference
-runtime.
+`web/liteapp.mjs` is a dependency-free browser runtime for applications that
+communicate with services through Workers, MessagePorts, desktop WebSockets, or
+Android WebMessage ports. It can be used with the C++ libraries or on its own;
+it does not assume an application domain, schema, UI framework, storage engine,
+or inference runtime.
 
 The browser runtime provides:
 
@@ -38,9 +77,10 @@ The browser runtime provides:
 - `AbortSignal` cancellation;
 - structured remote errors;
 - transferable binary payloads;
-- a generic service router; and
-- transports for browser Workers, MessagePorts, and WebSockets; and
-- a host-variant client for desktop, Wasm, and WebGPU backends.
+- a generic JavaScript service router;
+- transports for browser Workers, MessagePorts, WebSockets, and Android
+  WebMessage ports; and
+- a host-variant client for Android, desktop, Wasm, and WebGPU backends.
 
 Applications register their own method names, validate their own payloads, and
 own all business behavior:
@@ -75,15 +115,31 @@ media, and static/native packaging remain separate optional modules; importing
 the channel runtime does not pull them in.
 
 `WebSocketTransport` implements the same transport contract for native desktop
-services. `createVariantClient()` selects a desktop WebSocket or a Wasm/WebGPU
-Worker while returning the same `RequestChannel` interface. See
-[`examples/dual-host`](examples/dual-host/) for a minimal shared-UI skeleton.
+services. `createVariantClient()` selects an Android port, desktop WebSocket, or
+Wasm/WebGPU Worker while returning the same `RequestChannel` interface. A UI can
+therefore depend on one channel contract while deployment selects the execution
+host.
+
+`AndroidTransport` and `connectAndroid()` receive an origin-scoped port
+transferred by an Android WebView host. A document-start promise can capture the
+port before application modules run, avoiding bootstrap races with top-level
+`await`. Protocol envelopes are serialized as JSON strings and binary frames
+remain ArrayBuffers. Hosts check document-start script, message-channel, and
+`WEB_MESSAGE_ARRAY_BUFFER` support, restrict the port to their packaged
+application origin, and fail explicitly when the installed System WebView is
+too old.
 
 Native services can link `liteapp::service` and register handlers with the C++
 `ServiceRouter`. It uses the same request/event/cancellation envelopes as the
 JavaScript `RequestChannel`, runs bounded concurrent handlers, preserves
 per-request event ordering, propagates structured errors, and can carry binary
 frames beside JSON services.
+
+`ServiceRouter::open()` exposes the same router as an in-process
+`ServiceSession`. Embedders feed text and binary messages and provide callbacks
+for outbound frames and closure; `run(WebSocket&)` is the desktop adapter over
+that session. The router uses a portable cancellation token and builds with the
+Android NDK at API 29 without depending on `std::jthread` or an HTTP server.
 
 ## Safety Baseline
 
