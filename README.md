@@ -39,7 +39,8 @@ The browser runtime provides:
 - structured remote errors;
 - transferable binary payloads;
 - a generic service router; and
-- transports for browser Workers, MessagePorts, and WebSockets; and
+- transports for browser Workers, MessagePorts, WebSockets, and Android
+  WebMessage ports; and
 - a host-variant client for desktop, Wasm, and WebGPU backends.
 
 Applications register their own method names, validate their own payloads, and
@@ -79,11 +80,25 @@ services. `createVariantClient()` selects a desktop WebSocket or a Wasm/WebGPU
 Worker while returning the same `RequestChannel` interface. See
 [`examples/dual-host`](examples/dual-host/) for a minimal shared-UI skeleton.
 
+`AndroidTransport` and `connectAndroid()` receive an origin-scoped port
+transferred by an Android WebView host. Protocol envelopes are serialized as
+JSON strings and binary frames remain ArrayBuffers. Hosts must check
+`WebViewFeature.WEB_MESSAGE_ARRAY_BUFFER`, restrict the port to their packaged
+application origin, and fail explicitly when the installed System WebView lacks
+that capability.
+
 Native services can link `liteapp::service` and register handlers with the C++
 `ServiceRouter`. It uses the same request/event/cancellation envelopes as the
 JavaScript `RequestChannel`, runs bounded concurrent handlers, preserves
 per-request event ordering, propagates structured errors, and can carry binary
 frames beside JSON services.
+
+`ServiceRouter::open()` exposes the same router as an in-process
+`ServiceSession`. Embedders feed text and binary messages and provide callbacks
+for outbound frames and closure; `run(WebSocket&)` is an adapter over this
+session. Android builds omit LiteApp's HTTP and desktop-only
+watcher/window/application targets while retaining the core, VFS, and
+in-process service libraries.
 
 ## Safety Baseline
 

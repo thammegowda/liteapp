@@ -4,10 +4,12 @@ import {MessageChannel} from 'node:worker_threads';
 
 import {
     MessageTransport,
+    AndroidTransport,
     EventClient,
     RequestChannel,
     ServiceRouter,
     WebSocketTransport,
+    connectAndroid,
     connectWebSocket,
     createVariantClient,
 } from '../../web/liteapp.mjs';
@@ -42,6 +44,26 @@ class MockWebSocket extends EventTarget {
         if (this.readyState >= 2) return;
         this.readyState = 3;
         this.dispatchEvent(new Event('close'));
+    }
+}
+
+class MockAndroidPort extends EventTarget {
+    closed = false;
+    sent = [];
+
+    postMessage(value) {
+        if (this.closed) throw new Error('port is closed');
+        this.sent.push(value);
+    }
+
+    receive(value) {
+        this.dispatchEvent(new MessageEvent('message', {data: value}));
+    }
+
+    start() {}
+
+    close() {
+        this.closed = true;
     }
 }
 
@@ -190,6 +212,39 @@ test('WebSocket transport serializes protocol messages and tracks closure', asyn
     assert.throws(() => transport.post({}), /not open/);
 });
 
+test('Android transport serializes protocol messages and separates binary frames', async () => {
+    const port = new MockAndroidPort();
+    const transport = new AndroidTransport(port);
+    const received = [];
+    const binary = [];
+    transport.subscribe(message => received.push(message));
+    transport.subscribeBinary(message => binary.push(message));
+    transport.post({version: 1, kind: 'cancel', id: 'request'});
+    assert.deepEqual(JSON.parse(port.sent[0]), {version: 1, kind: 'cancel', id: 'request'});
+    port.receive(JSON.stringify({version: 1, kind: 'event', id: 'request', sequence: 0,
+        type: 'completed', payload: {ok: true}}));
+    assert.equal(received[0].type, 'completed');
+    port.receive(new Uint8Array([1, 2, 3]).buffer);
+    assert.equal(new Uint8Array(binary[0])[2], 3);
+    transport.postBinary(new Uint8Array([4, 5]));
+    assert.deepEqual([...new Uint8Array(port.sent.at(-1))], [4, 5]);
+    transport.close();
+    await transport.closed;
+    assert.equal(port.closed, true);
+    assert.throws(() => transport.post({}), /closed/);
+});
+
+test('Android transport consumes a document-start port promise', async () => {
+    const port = new MockAndroidPort();
+    const transport = await connectAndroid({
+        target: {__liteappAndroidPort: Promise.resolve(port)},
+        timeoutMs: 100,
+    });
+    transport.post({version: 1, kind: 'cancel', id: 'request'});
+    assert.equal(JSON.parse(port.sent[0]).id, 'request');
+    transport.close();
+});
+
 test('variant client creates a desktop request channel over WebSocket', async () => {
     const client = await createVariantClient({
         variant: 'desktop',
@@ -200,6 +255,21 @@ test('variant client creates a desktop request channel over WebSocket', async ()
     assert.equal(typeof client.channel.request, 'function');
     client.close();
     assert.equal(MockWebSocket.instances.at(-1).readyState, 3);
+});
+
+test('variant client creates an Android request channel over a transferred port', async () => {
+    const target = new EventTarget();
+    const port = new MockAndroidPort();
+    const pending = createVariantClient({variant: 'android', androidTarget: target});
+    target.dispatchEvent(Object.assign(new Event('message'), {
+        data: 'liteapp:android:connect',
+        ports: [port],
+    }));
+    const client = await pending;
+    assert.equal(client.variant, 'android');
+    assert.equal(typeof client.channel.request, 'function');
+    client.close();
+    assert.equal(port.closed, true);
 });
 
 test('variant client rejects unavailable and incomplete hosts', async () => {

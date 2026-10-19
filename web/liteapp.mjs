@@ -1,6 +1,7 @@
 export {RequestChannel} from './transport/channel.mjs';
 export {MessageTransport} from './transport/message-transport.mjs';
 export {WebSocketTransport, connectWebSocket} from './transport/websocket-transport.mjs';
+export {AndroidTransport, connectAndroid} from './transport/android-transport.mjs';
 export {createVariantClient} from './host/variant-client.mjs';
 export {EventClient} from './host/event-client.mjs';
 export {

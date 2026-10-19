@@ -1,5 +1,9 @@
 #include "liteapp/service/router.h"
 
+#ifndef LITEAPP_IN_PROCESS_ONLY
+#include "liteapp/http/server.h"
+#endif
+
 #include <atomic>
 #include <mutex>
 #include <stdexcept>
@@ -17,11 +21,14 @@ struct RequestState {
     std::atomic_size_t sequence{0};
     std::atomic_bool done{false};
     std::atomic_bool terminal{false};
-    std::jthread thread;
+    std::shared_ptr<std::atomic_bool> stopped{std::make_shared<std::atomic_bool>(false)};
+    std::thread thread;
+
+    void request_stop() const noexcept { stopped->store(true); }
 };
 
 struct Connection {
-    explicit Connection(WebSocket& value) : socket{value} {}
+    explicit Connection(ServiceSessionCallbacks value) : callbacks{std::move(value)} {}
 
     bool send_event(RequestState& request, std::string_view type, Json payload) {
         if (disconnected.load()) return false;
@@ -35,25 +42,32 @@ struct Connection {
             {"payload", std::move(payload)},
         };
         std::scoped_lock lock{send_mutex};
-        if (disconnected.load() || !socket.is_open()) return false;
-        if (!socket.send_text(message.dump())) {
-            disconnected.store(true);
-            return false;
+        if (disconnected.load()) return false;
+        try {
+            if (callbacks.send_text(message.dump())) return true;
+        } catch (...) {
         }
-        return true;
+        disconnected.store(true);
+        return false;
     }
 
     bool send_binary(std::span<const std::byte> data) {
         std::scoped_lock lock{send_mutex};
-        if (disconnected.load() || !socket.is_open()) return false;
-        if (!socket.send_binary(data)) {
-            disconnected.store(true);
-            return false;
+        if (disconnected.load() || !callbacks.send_binary) return false;
+        try {
+            if (callbacks.send_binary(data)) return true;
+        } catch (...) {
         }
-        return true;
+        disconnected.store(true);
+        return false;
     }
 
-    WebSocket& socket;
+    void disconnect(std::string_view reason) {
+        if (disconnected.exchange(true)) return;
+        if (callbacks.close) callbacks.close(reason);
+    }
+
+    ServiceSessionCallbacks callbacks;
     std::mutex send_mutex;
     std::atomic_bool disconnected{false};
 };
@@ -74,7 +88,7 @@ struct ServiceContext::Impl {
     Json payload;
     std::shared_ptr<Connection> connection;
     RequestState* request;
-    std::stop_token stop;
+    ServiceStopToken stop;
 };
 
 ServiceContext::ServiceContext(std::shared_ptr<Impl> impl) : impl_{std::move(impl)} {}
@@ -95,7 +109,7 @@ bool ServiceContext::cancelled() const noexcept {
     return impl_->stop.stop_requested() || impl_->connection->disconnected.load();
 }
 
-std::stop_token ServiceContext::stop_token() const noexcept {
+ServiceStopToken ServiceContext::stop_token() const noexcept {
     return impl_->stop;
 }
 
@@ -114,7 +128,7 @@ bool ServiceContext::send_binary(std::span<const std::byte> data) const {
 bool ServiceContext::fail(Error error) const {
     bool expected = false;
     if (!impl_->request->terminal.compare_exchange_strong(expected, true)) return false;
-    impl_->request->thread.request_stop();
+    impl_->request->request_stop();
     return impl_->connection->send_event(
         *impl_->request, "error",
         {{"code", std::move(error.code)}, {"message", std::move(error.message)}});
@@ -132,30 +146,21 @@ struct ServiceRouter::Impl {
     BinaryServiceHandler binary;
 };
 
-ServiceRouter::ServiceRouter(ServiceRouterOptions options) : impl_{std::make_unique<Impl>(options)} {}
-ServiceRouter::~ServiceRouter() = default;
-ServiceRouter::ServiceRouter(ServiceRouter&&) noexcept = default;
-ServiceRouter& ServiceRouter::operator=(ServiceRouter&&) noexcept = default;
+struct ServiceSession::Impl {
+    explicit Impl(ServiceRouterOptions configured_options,
+                  std::unordered_map<std::string, ServiceHandler> configured_handlers,
+                  ServiceHandler configured_fallback,
+                  BinaryServiceHandler configured_binary,
+                  ServiceSessionCallbacks configured)
+        : options{configured_options},
+          handlers{std::move(configured_handlers)},
+          fallback{std::move(configured_fallback)},
+          binary{std::move(configured_binary)},
+          connection{std::make_shared<Connection>(std::move(configured))} {}
 
-void ServiceRouter::register_method(std::string method, ServiceHandler handler) {
-    if (method.empty() || method.size() > impl_->options.max_method_bytes || !handler)
-        throw std::invalid_argument("service method and handler must be valid");
-    if (!impl_->handlers.emplace(std::move(method), std::move(handler)).second)
-        throw std::invalid_argument("service method is already registered");
-}
+    ~Impl() { close(); }
 
-void ServiceRouter::set_fallback(ServiceHandler handler) {
-    impl_->fallback = std::move(handler);
-}
-
-void ServiceRouter::set_binary_handler(BinaryServiceHandler handler) {
-    impl_->binary = std::move(handler);
-}
-
-void ServiceRouter::run(WebSocket& socket) const {
-    auto connection = std::make_shared<Connection>(socket);
-    std::unordered_map<std::string, std::unique_ptr<RequestState>> active;
-    const auto reap = [&] {
+    void reap_locked() {
         for (auto iterator = active.begin(); iterator != active.end();) {
             if (!iterator->second->done.load()) {
                 ++iterator;
@@ -164,35 +169,29 @@ void ServiceRouter::run(WebSocket& socket) const {
             if (iterator->second->thread.joinable()) iterator->second->thread.join();
             iterator = active.erase(iterator);
         }
-    };
-    while (socket.is_open()) {
-        reap();
-        auto received = socket.read();
-        if (!received || !*received) break;
-        if ((**received).kind == WebSocketMessageKind::binary) {
-            if (impl_->binary) {
-                const auto& data = (**received).data;
-                impl_->binary(std::as_bytes(std::span{data.data(), data.size()}));
-            }
-            continue;
-        }
-        const auto message = Json::parse((**received).data, nullptr, false);
+    }
+
+    bool receive_text(std::string_view source) {
+        if (connection->disconnected.load()) return false;
+        const auto message = Json::parse(source, nullptr, false);
         if (message.is_discarded() || !message.is_object() || message.value("version", 0) != 1 ||
-            !valid_component(message.value("id", Json{}), impl_->options.max_id_bytes) ||
+            !valid_component(message.value("id", Json{}), options.max_id_bytes) ||
             !message.contains("kind") || !message["kind"].is_string()) {
-            socket.close("invalid service envelope");
-            break;
+            connection->disconnect("invalid service envelope");
+            return false;
         }
         const auto id = message["id"].get<std::string>();
         const auto kind = message["kind"].get<std::string>();
+        std::scoped_lock lock{active_mutex};
+        reap_locked();
         if (kind == "cancel") {
-            if (const auto found = active.find(id); found != active.end()) found->second->thread.request_stop();
-            continue;
+            if (const auto found = active.find(id); found != active.end()) found->second->request_stop();
+            return true;
         }
         if (kind != "request" ||
-            !valid_component(message.value("method", Json{}), impl_->options.max_method_bytes)) {
-            socket.close("invalid service request");
-            break;
+            !valid_component(message.value("method", Json{}), options.max_method_bytes)) {
+            connection->disconnect("invalid service request");
+            return false;
         }
         if (active.contains(id)) {
             RequestState duplicate;
@@ -200,33 +199,33 @@ void ServiceRouter::run(WebSocket& socket) const {
             connection->send_event(
                 duplicate, "error",
                 {{"code", "duplicate_request"}, {"message", "Request ID is already active"}});
-            continue;
+            return true;
         }
-        if (active.size() >= impl_->options.max_active_requests) {
+        if (active.size() >= options.max_active_requests) {
             RequestState saturated;
             saturated.id = id;
             connection->send_event(
                 saturated, "error",
                 {{"code", "too_many_requests"}, {"message", "Too many service requests are active"}});
-            continue;
+            return true;
         }
         const auto method = message["method"].get<std::string>();
-        const auto found = impl_->handlers.find(method);
-        auto handler = found == impl_->handlers.end() ? impl_->fallback : found->second;
+        const auto found = handlers.find(method);
+        auto handler = found == handlers.end() ? fallback : found->second;
         if (!handler) {
             RequestState unknown;
             unknown.id = id;
             connection->send_event(
                 unknown, "error",
                 {{"code", "unknown_method"}, {"message", "Unknown service method: " + method}});
-            continue;
+            return true;
         }
         auto request = std::make_unique<RequestState>();
         request->id = id;
         auto* state = request.get();
         const auto payload = message.value("payload", Json{});
-        state->thread = std::jthread(
-            [connection, state, id, method, payload, handler = std::move(handler)](std::stop_token stop) mutable {
+        state->thread = std::thread(
+            [connection = connection, state, id, method, payload, handler = std::move(handler)]() mutable {
                 auto context = ServiceContext{std::make_shared<ServiceContext::Impl>(
                     ServiceContext::Impl{
                         .id = id,
@@ -234,7 +233,7 @@ void ServiceRouter::run(WebSocket& socket) const {
                         .payload = payload,
                         .connection = connection,
                         .request = state,
-                        .stop = stop,
+                        .stop = ServiceStopToken{state->stopped},
                     })};
                 Result<Json> result;
                 try {
@@ -261,16 +260,113 @@ void ServiceRouter::run(WebSocket& socket) const {
                 state->done.store(true);
             });
         active.emplace(id, std::move(request));
+        return true;
     }
-    connection->disconnected.store(true);
-    for (auto& [id, request] : active) {
-        static_cast<void>(id);
-        request->thread.request_stop();
+
+    bool receive_binary(std::span<const std::byte> data) {
+        if (connection->disconnected.load()) return false;
+        if (!binary) return true;
+        try {
+            binary(data);
+            return true;
+        } catch (...) {
+            connection->disconnect("binary service handler failed");
+            return false;
+        }
     }
-    for (auto& [id, request] : active) {
-        static_cast<void>(id);
-        if (request->thread.joinable()) request->thread.join();
+
+    void close() {
+        connection->disconnect("service session closed");
+        std::unordered_map<std::string, std::unique_ptr<RequestState>> closing;
+        {
+            std::scoped_lock lock{active_mutex};
+            closing.swap(active);
+        }
+        for (auto& [id, request] : closing) {
+            static_cast<void>(id);
+            request->request_stop();
+        }
+        for (auto& [id, request] : closing) {
+            static_cast<void>(id);
+            if (request->thread.joinable()) request->thread.join();
+        }
     }
+
+    ServiceRouterOptions options;
+    std::unordered_map<std::string, ServiceHandler> handlers;
+    ServiceHandler fallback;
+    BinaryServiceHandler binary;
+    std::shared_ptr<Connection> connection;
+    std::mutex active_mutex;
+    std::unordered_map<std::string, std::unique_ptr<RequestState>> active;
+};
+
+ServiceSession::ServiceSession(std::unique_ptr<Impl> impl) : impl_{std::move(impl)} {}
+ServiceSession::~ServiceSession() = default;
+ServiceSession::ServiceSession(ServiceSession&&) noexcept = default;
+ServiceSession& ServiceSession::operator=(ServiceSession&&) noexcept = default;
+
+bool ServiceSession::receive_text(std::string_view message) {
+    return impl_ && impl_->receive_text(message);
 }
+
+bool ServiceSession::receive_binary(std::span<const std::byte> data) {
+    return impl_ && impl_->receive_binary(data);
+}
+
+void ServiceSession::close() {
+    if (impl_) impl_->close();
+}
+
+ServiceRouter::ServiceRouter(ServiceRouterOptions options) : impl_{std::make_unique<Impl>(options)} {}
+ServiceRouter::~ServiceRouter() = default;
+ServiceRouter::ServiceRouter(ServiceRouter&&) noexcept = default;
+ServiceRouter& ServiceRouter::operator=(ServiceRouter&&) noexcept = default;
+
+void ServiceRouter::register_method(std::string method, ServiceHandler handler) {
+    if (method.empty() || method.size() > impl_->options.max_method_bytes || !handler)
+        throw std::invalid_argument("service method and handler must be valid");
+    if (!impl_->handlers.emplace(std::move(method), std::move(handler)).second)
+        throw std::invalid_argument("service method is already registered");
+}
+
+void ServiceRouter::set_fallback(ServiceHandler handler) {
+    impl_->fallback = std::move(handler);
+}
+
+void ServiceRouter::set_binary_handler(BinaryServiceHandler handler) {
+    impl_->binary = std::move(handler);
+}
+
+std::unique_ptr<ServiceSession> ServiceRouter::open(ServiceSessionCallbacks callbacks) const {
+    if (!callbacks.send_text) throw std::invalid_argument("service session requires a text sender");
+    return std::unique_ptr<ServiceSession>{new ServiceSession{std::make_unique<ServiceSession::Impl>(
+        impl_->options, impl_->handlers, impl_->fallback, impl_->binary, std::move(callbacks))}};
+}
+
+#ifndef LITEAPP_IN_PROCESS_ONLY
+void ServiceRouter::run(WebSocket& socket) const {
+    auto session = open({
+        .send_text = [&socket](std::string_view message) {
+            return socket.is_open() && socket.send_text(message);
+        },
+        .send_binary = [&socket](std::span<const std::byte> data) {
+            return socket.is_open() && socket.send_binary(data);
+        },
+        .close = [&socket](std::string_view reason) { socket.close(reason); },
+    });
+    while (socket.is_open()) {
+        auto received = socket.read();
+        if (!received || !*received) break;
+        if ((**received).kind == WebSocketMessageKind::binary) {
+            const auto& data = (**received).data;
+            if (!session->receive_binary(std::as_bytes(std::span{data.data(), data.size()}))) break;
+        } else if (!session->receive_text((**received).data)) {
+            break;
+        }
+    }
+    session->close();
+}
+#endif
 
 }  // namespace liteapp
