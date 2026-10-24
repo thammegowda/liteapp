@@ -11,3 +11,5 @@ export {
     RequestCancelledError,
 } from './transport/protocol.mjs';
 export {ServiceRouter} from './transport/service-router.mjs';
+export {ExtensionPortTransport, connectExtensionPort} from './extension/runtime-port-transport.mjs';
+export {ServiceBroker} from './extension/service-broker.mjs';

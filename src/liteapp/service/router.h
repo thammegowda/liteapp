@@ -51,6 +51,7 @@ public:
     [[nodiscard]] bool send_binary(std::span<const std::byte> data) const;
 
 private:
+    friend class ServiceResponder;
     friend class ServiceRouter;
     friend class ServiceSession;
     struct Impl;
@@ -60,7 +61,31 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
+class ServiceResponder {
+public:
+    struct Impl;
+
+    ServiceResponder() = default;
+    explicit ServiceResponder(std::shared_ptr<Impl> impl);
+    ~ServiceResponder();
+    ServiceResponder(ServiceResponder&&) noexcept;
+    ServiceResponder& operator=(ServiceResponder&&) noexcept;
+    ServiceResponder(const ServiceResponder&) = delete;
+    ServiceResponder& operator=(const ServiceResponder&) = delete;
+
+    [[nodiscard]] bool cancelled() const noexcept;
+    [[nodiscard]] ServiceStopToken stop_token() const noexcept;
+    [[nodiscard]] bool emit(std::string_view type, nlohmann::json payload = nlohmann::json::object()) const;
+    [[nodiscard]] bool send_binary(std::span<const std::byte> data) const;
+    [[nodiscard]] bool complete(nlohmann::json payload = nlohmann::json::object());
+    [[nodiscard]] bool fail(Error error);
+
+private:
+    std::shared_ptr<Impl> impl_;
+};
+
 using ServiceHandler = std::function<Result<nlohmann::json>(ServiceContext&)>;
+using AsyncServiceHandler = std::function<void(ServiceContext&, ServiceResponder)>;
 using BinaryServiceHandler = std::function<void(std::span<const std::byte>)>;
 
 struct ServiceRouterOptions {
@@ -106,6 +131,7 @@ public:
     ServiceRouter& operator=(const ServiceRouter&) = delete;
 
     void register_method(std::string method, ServiceHandler handler);
+    void register_async_method(std::string method, AsyncServiceHandler handler);
     void set_fallback(ServiceHandler handler);
     void set_binary_handler(BinaryServiceHandler handler);
     [[nodiscard]] std::unique_ptr<ServiceSession> open(ServiceSessionCallbacks callbacks) const;

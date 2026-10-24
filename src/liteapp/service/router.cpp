@@ -19,7 +19,7 @@ using Json = nlohmann::json;
 struct RequestState {
     std::string id;
     std::atomic_size_t sequence{0};
-    std::atomic_bool done{false};
+    std::atomic_bool invocation_done{false};
     std::atomic_bool terminal{false};
     std::shared_ptr<std::atomic_bool> stopped{std::make_shared<std::atomic_bool>(false)};
     std::thread thread;
@@ -80,6 +80,16 @@ bool valid_component(const Json& value, std::size_t maximum) {
     return value.is_string() && !value.get_ref<const std::string&>().empty() &&
            value.get_ref<const std::string&>().size() <= maximum;
 }
+
+bool finish_request(const std::shared_ptr<Connection>& connection,
+                    const std::shared_ptr<RequestState>& request,
+                    std::string_view type,
+                    Json payload) {
+    bool expected = false;
+    if (!request->terminal.compare_exchange_strong(expected, true)) return false;
+    if (type != "completed") request->request_stop();
+    return connection->send_event(*request, type, std::move(payload));
+}
 }  // namespace
 
 struct ServiceContext::Impl {
@@ -87,7 +97,7 @@ struct ServiceContext::Impl {
     std::string method;
     Json payload;
     std::shared_ptr<Connection> connection;
-    RequestState* request;
+    std::shared_ptr<RequestState> request;
     ServiceStopToken stop;
 };
 
@@ -126,13 +136,75 @@ bool ServiceContext::send_binary(std::span<const std::byte> data) const {
 }
 
 bool ServiceContext::fail(Error error) const {
-    bool expected = false;
-    if (!impl_->request->terminal.compare_exchange_strong(expected, true)) return false;
-    impl_->request->request_stop();
-    return impl_->connection->send_event(
-        *impl_->request, "error",
+    return finish_request(
+        impl_->connection, impl_->request, "error",
         {{"code", std::move(error.code)}, {"message", std::move(error.message)}});
 }
+
+struct ServiceResponder::Impl {
+    explicit Impl(std::shared_ptr<ServiceContext::Impl> value) : context{std::move(value)} {}
+
+    ~Impl() {
+        if (!context || context->request->terminal.load()) return;
+        if (context->stop.stop_requested() || context->connection->disconnected.load())
+            static_cast<void>(finish_request(
+                context->connection, context->request, "cancelled", {{"message", "Request cancelled"}}));
+        else
+            static_cast<void>(finish_request(
+                context->connection, context->request, "error",
+                {{"code", "incomplete_async_request"},
+                 {"message", "Asynchronous service handler ended without completing the request"}}));
+    }
+
+    std::shared_ptr<ServiceContext::Impl> context;
+};
+
+ServiceResponder::ServiceResponder(std::shared_ptr<Impl> impl) : impl_{std::move(impl)} {}
+ServiceResponder::~ServiceResponder() = default;
+ServiceResponder::ServiceResponder(ServiceResponder&&) noexcept = default;
+ServiceResponder& ServiceResponder::operator=(ServiceResponder&&) noexcept = default;
+
+bool ServiceResponder::cancelled() const noexcept {
+    return !impl_ || impl_->context->stop.stop_requested() || impl_->context->connection->disconnected.load();
+}
+
+ServiceStopToken ServiceResponder::stop_token() const noexcept {
+    return impl_ ? impl_->context->stop : ServiceStopToken{};
+}
+
+bool ServiceResponder::emit(std::string_view type, Json payload) const {
+    if (!impl_) return false;
+    auto context = ServiceContext{impl_->context};
+    return context.emit(type, std::move(payload));
+}
+
+bool ServiceResponder::send_binary(std::span<const std::byte> data) const {
+    if (!impl_) return false;
+    auto context = ServiceContext{impl_->context};
+    return context.send_binary(data);
+}
+
+bool ServiceResponder::complete(Json payload) {
+    if (!impl_) return false;
+    const auto completed = finish_request(
+        impl_->context->connection, impl_->context->request, "completed", std::move(payload));
+    impl_.reset();
+    return completed;
+}
+
+bool ServiceResponder::fail(Error error) {
+    if (!impl_) return false;
+    const auto failed = finish_request(
+        impl_->context->connection, impl_->context->request, "error",
+        {{"code", std::move(error.code)}, {"message", std::move(error.message)}});
+    impl_.reset();
+    return failed;
+}
+
+struct ServiceHandlerEntry {
+    ServiceHandler synchronous;
+    AsyncServiceHandler asynchronous;
+};
 
 struct ServiceRouter::Impl {
     explicit Impl(ServiceRouterOptions configured) : options{configured} {
@@ -141,14 +213,14 @@ struct ServiceRouter::Impl {
     }
 
     ServiceRouterOptions options;
-    std::unordered_map<std::string, ServiceHandler> handlers;
+    std::unordered_map<std::string, ServiceHandlerEntry> handlers;
     ServiceHandler fallback;
     BinaryServiceHandler binary;
 };
 
 struct ServiceSession::Impl {
     explicit Impl(ServiceRouterOptions configured_options,
-                  std::unordered_map<std::string, ServiceHandler> configured_handlers,
+                  std::unordered_map<std::string, ServiceHandlerEntry> configured_handlers,
                   ServiceHandler configured_fallback,
                   BinaryServiceHandler configured_binary,
                   ServiceSessionCallbacks configured)
@@ -162,12 +234,15 @@ struct ServiceSession::Impl {
 
     void reap_locked() {
         for (auto iterator = active.begin(); iterator != active.end();) {
-            if (!iterator->second->done.load()) {
+            if (!iterator->second->invocation_done.load()) {
                 ++iterator;
                 continue;
             }
             if (iterator->second->thread.joinable()) iterator->second->thread.join();
-            iterator = active.erase(iterator);
+            if (iterator->second->terminal.load())
+                iterator = active.erase(iterator);
+            else
+                ++iterator;
         }
     }
 
@@ -185,7 +260,9 @@ struct ServiceSession::Impl {
         std::scoped_lock lock{active_mutex};
         reap_locked();
         if (kind == "cancel") {
-            if (const auto found = active.find(id); found != active.end()) found->second->request_stop();
+            if (const auto found = active.find(id); found != active.end())
+                static_cast<void>(finish_request(
+                    connection, found->second, "cancelled", {{"message", "Request cancelled"}}));
             return true;
         }
         if (kind != "request" ||
@@ -211,8 +288,10 @@ struct ServiceSession::Impl {
         }
         const auto method = message["method"].get<std::string>();
         const auto found = handlers.find(method);
-        auto handler = found == handlers.end() ? fallback : found->second;
-        if (!handler) {
+        auto entry = found == handlers.end()
+            ? ServiceHandlerEntry{.synchronous = fallback, .asynchronous = {}}
+            : found->second;
+        if (!entry.synchronous && !entry.asynchronous) {
             RequestState unknown;
             unknown.id = id;
             connection->send_event(
@@ -220,24 +299,44 @@ struct ServiceSession::Impl {
                 {{"code", "unknown_method"}, {"message", "Unknown service method: " + method}});
             return true;
         }
-        auto request = std::make_unique<RequestState>();
+        auto request = std::make_shared<RequestState>();
         request->id = id;
-        auto* state = request.get();
         const auto payload = message.value("payload", Json{});
-        state->thread = std::thread(
-            [connection = connection, state, id, method, payload, handler = std::move(handler)]() mutable {
-                auto context = ServiceContext{std::make_shared<ServiceContext::Impl>(
+        request->thread = std::thread(
+            [connection = connection, request, id, method, payload, entry = std::move(entry)]() mutable {
+                auto context_impl = std::make_shared<ServiceContext::Impl>(
                     ServiceContext::Impl{
                         .id = id,
                         .method = method,
                         .payload = payload,
                         .connection = connection,
-                        .request = state,
-                        .stop = ServiceStopToken{state->stopped},
-                    })};
+                        .request = request,
+                        .stop = ServiceStopToken{request->stopped},
+                    });
+                auto context = ServiceContext{context_impl};
+                if (entry.asynchronous) {
+                    auto responder_impl = std::make_shared<ServiceResponder::Impl>(context_impl);
+                    try {
+                        entry.asynchronous(context, ServiceResponder{responder_impl});
+                    } catch (const ServiceFailure& error) {
+                        static_cast<void>(finish_request(
+                            connection, request, "error", {{"code", error.code}, {"message", error.what()}}));
+                    } catch (const std::exception& error) {
+                        static_cast<void>(finish_request(
+                            connection, request, "error",
+                            {{"code", "service_error"}, {"message", error.what()}}));
+                    } catch (...) {
+                        static_cast<void>(finish_request(
+                            connection, request, "error",
+                            {{"code", "service_error"}, {"message", "service handler failed"}}));
+                    }
+                    request->invocation_done.store(true);
+                    responder_impl.reset();
+                    return;
+                }
                 Result<Json> result;
                 try {
-                    result = handler(context);
+                    result = entry.synchronous(context);
                 } catch (const ServiceFailure& error) {
                     result = std::unexpected(Error{error.code, error.what()});
                 } catch (const std::exception& error) {
@@ -245,21 +344,19 @@ struct ServiceSession::Impl {
                 } catch (...) {
                     result = std::unexpected(Error{"service_error", "service handler failed"});
                 }
-                bool expected = false;
-                if (state->terminal.compare_exchange_strong(expected, true)) {
-                    if (context.cancelled()) {
-                        connection->send_event(*state, "cancelled", {{"message", "Request cancelled"}});
-                    } else if (result) {
-                        connection->send_event(*state, "completed", std::move(*result));
-                    } else {
-                        connection->send_event(
-                            *state, "error",
-                            {{"code", result.error().code}, {"message", result.error().message}});
-                    }
+                if (context.cancelled()) {
+                    static_cast<void>(finish_request(
+                        connection, request, "cancelled", {{"message", "Request cancelled"}}));
+                } else if (result) {
+                    static_cast<void>(finish_request(connection, request, "completed", std::move(*result)));
+                } else {
+                    static_cast<void>(finish_request(
+                        connection, request, "error",
+                        {{"code", result.error().code}, {"message", result.error().message}}));
                 }
-                state->done.store(true);
+                request->invocation_done.store(true);
             });
-        active.emplace(id, std::move(request));
+        active.emplace(id, request);
         return true;
     }
 
@@ -277,7 +374,7 @@ struct ServiceSession::Impl {
 
     void close() {
         connection->disconnect("service session closed");
-        std::unordered_map<std::string, std::unique_ptr<RequestState>> closing;
+        std::unordered_map<std::string, std::shared_ptr<RequestState>> closing;
         {
             std::scoped_lock lock{active_mutex};
             closing.swap(active);
@@ -293,12 +390,12 @@ struct ServiceSession::Impl {
     }
 
     ServiceRouterOptions options;
-    std::unordered_map<std::string, ServiceHandler> handlers;
+    std::unordered_map<std::string, ServiceHandlerEntry> handlers;
     ServiceHandler fallback;
     BinaryServiceHandler binary;
     std::shared_ptr<Connection> connection;
     std::mutex active_mutex;
-    std::unordered_map<std::string, std::unique_ptr<RequestState>> active;
+    std::unordered_map<std::string, std::shared_ptr<RequestState>> active;
 };
 
 ServiceSession::ServiceSession(std::unique_ptr<Impl> impl) : impl_{std::move(impl)} {}
@@ -326,7 +423,18 @@ ServiceRouter& ServiceRouter::operator=(ServiceRouter&&) noexcept = default;
 void ServiceRouter::register_method(std::string method, ServiceHandler handler) {
     if (method.empty() || method.size() > impl_->options.max_method_bytes || !handler)
         throw std::invalid_argument("service method and handler must be valid");
-    if (!impl_->handlers.emplace(std::move(method), std::move(handler)).second)
+    if (!impl_->handlers.emplace(
+            std::move(method),
+            ServiceHandlerEntry{.synchronous = std::move(handler), .asynchronous = {}}).second)
+        throw std::invalid_argument("service method is already registered");
+}
+
+void ServiceRouter::register_async_method(std::string method, AsyncServiceHandler handler) {
+    if (method.empty() || method.size() > impl_->options.max_method_bytes || !handler)
+        throw std::invalid_argument("service method and handler must be valid");
+    if (!impl_->handlers.emplace(
+            std::move(method),
+            ServiceHandlerEntry{.synchronous = {}, .asynchronous = std::move(handler)}).second)
         throw std::invalid_argument("service method is already registered");
 }
 
