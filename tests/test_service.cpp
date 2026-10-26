@@ -3,8 +3,10 @@
 #include <chrono>
 #include <cstddef>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -122,4 +124,125 @@ TEST(FrameworkService, InProcessSessionUsesTheSameProtocol) {
     EXPECT_EQ(binary_bytes.load(), payload.size());
     EXPECT_FALSE(session->receive_text("{invalid"));
     EXPECT_EQ(closed, "invalid service envelope");
+}
+
+TEST(FrameworkService, AsyncSessionCompletesAndCancelsDeferredRequests) {
+    liteapp::ServiceRouter router;
+    std::mutex responders_mutex;
+    std::unordered_map<std::string, liteapp::ServiceResponder> responders;
+    router.register_async_method(
+        "task.defer",
+        [&](liteapp::ServiceContext& context, liteapp::ServiceResponder responder) {
+            ASSERT_TRUE(responder.emit("started", {{"value", context.payload().value("value", 0)}}));
+            std::scoped_lock lock{responders_mutex};
+            responders.emplace(std::string{context.id()}, std::move(responder));
+        });
+
+    std::mutex messages_mutex;
+    std::vector<Json> messages;
+    auto session = router.open({
+        .send_text = [&](std::string_view message) {
+            std::scoped_lock lock{messages_mutex};
+            messages.push_back(Json::parse(message));
+            return true;
+        },
+    });
+    ASSERT_TRUE(session->receive_text(Json{
+        {"version", 1}, {"kind", "request"}, {"id", "complete"}, {"method", "task.defer"},
+        {"payload", {{"value", 7}}},
+    }.dump()));
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{responders_mutex};
+            if (responders.contains("complete")) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    {
+        std::scoped_lock lock{responders_mutex};
+        ASSERT_TRUE(responders.contains("complete"));
+        EXPECT_TRUE(responders.at("complete").complete({{"value", 14}}));
+        responders.erase("complete");
+    }
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{messages_mutex};
+            if (messages.size() >= 2) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    {
+        std::scoped_lock lock{messages_mutex};
+        ASSERT_EQ(messages.size(), 2);
+        EXPECT_EQ(messages[0]["type"], "started");
+        EXPECT_EQ(messages[0]["sequence"], 0);
+        EXPECT_EQ(messages[1]["type"], "completed");
+        EXPECT_EQ(messages[1]["sequence"], 1);
+        EXPECT_EQ(messages[1]["payload"]["value"], 14);
+    }
+
+    ASSERT_TRUE(session->receive_text(Json{
+        {"version", 1}, {"kind", "request"}, {"id", "cancel"}, {"method", "task.defer"},
+        {"payload", Json::object()},
+    }.dump()));
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{responders_mutex};
+            if (responders.contains("cancel")) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    ASSERT_TRUE(session->receive_text(
+        Json{{"version", 1}, {"kind", "cancel"}, {"id", "cancel"}}.dump()));
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{messages_mutex};
+            if (messages.size() >= 4) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    {
+        std::scoped_lock lock{responders_mutex};
+        ASSERT_TRUE(responders.contains("cancel"));
+        EXPECT_TRUE(responders.at("cancel").cancelled());
+        EXPECT_FALSE(responders.at("cancel").complete());
+        responders.erase("cancel");
+    }
+    {
+        std::scoped_lock lock{messages_mutex};
+        ASSERT_EQ(messages.size(), 4);
+        EXPECT_EQ(messages[2]["type"], "started");
+        EXPECT_EQ(messages[3]["type"], "cancelled");
+    }
+}
+
+TEST(FrameworkService, DroppedAsyncResponderFailsTheRequest) {
+    liteapp::ServiceRouter router;
+    router.register_async_method(
+        "task.incomplete",
+        [](liteapp::ServiceContext&, liteapp::ServiceResponder) {});
+    std::mutex messages_mutex;
+    std::vector<Json> messages;
+    auto session = router.open({
+        .send_text = [&](std::string_view message) {
+            std::scoped_lock lock{messages_mutex};
+            messages.push_back(Json::parse(message));
+            return true;
+        },
+    });
+    ASSERT_TRUE(session->receive_text(Json{
+        {"version", 1}, {"kind", "request"}, {"id", "incomplete"}, {"method", "task.incomplete"},
+        {"payload", Json::object()},
+    }.dump()));
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        {
+            std::scoped_lock lock{messages_mutex};
+            if (!messages.empty()) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    std::scoped_lock lock{messages_mutex};
+    ASSERT_EQ(messages.size(), 1);
+    EXPECT_EQ(messages[0]["type"], "error");
+    EXPECT_EQ(messages[0]["payload"]["code"], "incomplete_async_request");
 }
