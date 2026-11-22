@@ -96,8 +96,8 @@ struct ServiceRouterOptions {
 
 struct ServiceSessionCallbacks {
     std::function<bool(std::string_view)> send_text;
-    std::function<bool(std::span<const std::byte>)> send_binary;
-    std::function<void(std::string_view)> close;
+    std::function<bool(std::span<const std::byte>)> send_binary{};
+    std::function<void(std::string_view)> close{};
 };
 
 class ServiceSession {
