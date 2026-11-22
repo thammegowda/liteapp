@@ -42,19 +42,26 @@ struct Request {
     std::string body;
     std::unordered_map<std::string, std::string> headers;
     std::unordered_map<std::string, std::string> query;
+    // Valid only while the handler runs; reports whether the client has disconnected.
+    std::function<bool()> connection_closed{};
 
     [[nodiscard]] std::string header(std::string_view name) const;
     [[nodiscard]] std::string query_parameter(std::string_view name) const;
 };
 
 struct Response {
+    using ContentWriter = std::function<bool(std::string_view)>;
+
     int status{200};
     std::string content_type{"text/plain; charset=utf-8"};
     std::string body;
     std::unordered_map<std::string, std::string> headers;
+    std::function<bool(const ContentWriter&)> content_provider;
 
     [[nodiscard]] static Response text(std::string body, int status = 200);
     [[nodiscard]] static Response json(std::string body, int status = 200);
+    [[nodiscard]] static Response streamed(std::string content_type,
+                                           std::function<bool(const ContentWriter&)> content_provider);
 };
 
 using Handler = std::function<Response(const Request&)>;

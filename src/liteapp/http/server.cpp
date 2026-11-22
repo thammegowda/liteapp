@@ -98,6 +98,7 @@ Request make_request(const httplib::Request& source) {
         .body = source.body,
         .headers = std::move(headers),
         .query = std::move(query),
+        .connection_closed = [&source] { return source.is_connection_closed(); },
     };
 }
 
@@ -105,6 +106,19 @@ void apply_response(httplib::Response& target, Response source) {
     target.status = source.status;
     for (auto& [name, value] : source.headers) {
         target.set_header(name, value);
+    }
+    if (source.content_provider) {
+        target.set_chunked_content_provider(
+            source.content_type,
+            [provider = std::move(source.content_provider)](std::size_t, httplib::DataSink& sink) {
+                const Response::ContentWriter write = [&sink](std::string_view chunk) {
+                    return sink.is_writable() && sink.write(chunk.data(), chunk.size());
+                };
+                const auto completed = provider(write);
+                sink.done();
+                return completed;
+            });
+        return;
     }
     target.set_content(std::move(source.body), source.content_type);
 }
@@ -125,6 +139,7 @@ Response virtual_file_response(const vfs::FileSystem& filesystem, std::string_vi
         .content_type = std::move(content_type),
         .body = std::move(body),
         .headers = {},
+        .content_provider = {},
     };
 }
 
@@ -266,6 +281,7 @@ Response Response::text(std::string body, int status) {
         .content_type = "text/plain; charset=utf-8",
         .body = std::move(body),
         .headers = {},
+        .content_provider = {},
     };
 }
 
@@ -275,6 +291,18 @@ Response Response::json(std::string body, int status) {
         .content_type = "application/json",
         .body = std::move(body),
         .headers = {},
+        .content_provider = {},
+    };
+}
+
+Response Response::streamed(std::string content_type,
+                            std::function<bool(const ContentWriter&)> content_provider) {
+    return Response{
+        .status = 200,
+        .content_type = std::move(content_type),
+        .body = {},
+        .headers = {},
+        .content_provider = std::move(content_provider),
     };
 }
 
