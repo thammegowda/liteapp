@@ -165,6 +165,14 @@ ctest --preset debug
 
 Use the `sanitize` preset on Linux/macOS to run with AddressSanitizer and UndefinedBehaviorSanitizer.
 
+Or use the `Makefile`, which mirrors CI. If `libs/json` and `libs/googletest` are missing, it clones the pinned revisions:
+
+```sh
+make test            # C++ (debug preset) + browser tests; needs Node >= 20
+make test-sanitize   # C++ suite with ASan/UBSan
+make test NODE=/path/to/node   # override the Node binary
+```
+
 The `LiteApp CI` workflow runs the complete C++ and browser suites on Linux,
 macOS, and Windows, repeats the C++ suite with ASan/UBSan on Linux, builds the
 self-contained dual-host skeleton, and uploads one runnable skeleton artifact

@@ -105,15 +105,14 @@ target_include_directories(liteapp_vfs PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(liteapp_vfs PUBLIC liteapp::core PRIVATE liteapp_miniz)
 liteapp_harden(liteapp_vfs)
 
-if(NOT ANDROID)
-    add_library(liteapp_http
-        src/liteapp/http/server.cpp
-    )
-    add_library(liteapp::http ALIAS liteapp_http)
-    target_include_directories(liteapp_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(liteapp_http PUBLIC liteapp::core liteapp::vfs PRIVATE liteapp::httplib)
-    liteapp_harden(liteapp_http)
-endif()
+# Headless HTTP is portable (servers embedded in CLIs, including on Android); only the desktop shell below is not.
+add_library(liteapp_http
+    src/liteapp/http/server.cpp
+)
+add_library(liteapp::http ALIAS liteapp_http)
+target_include_directories(liteapp_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(liteapp_http PUBLIC liteapp::core liteapp::vfs PRIVATE liteapp::httplib)
+liteapp_harden(liteapp_http)
 
 if(NOT ANDROID)
     set(LITEAPP_NATIVE_WATCHER_SOURCE)
