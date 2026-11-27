@@ -20,8 +20,13 @@ struct DesktopApplicationOptions {
     int height{820};
     int minimum_width{900};
     int minimum_height{600};
+    // Receives the one-time launch URL. Without a local display (an SSH session, or Linux with neither DISPLAY nor
+    // WAYLAND_DISPLAY) no window or browser is opened, and the app keeps serving for a browser elsewhere, e.g.
+    // through a forwarded port; the same holds when opening fails.
     std::function<void(std::string_view)> on_ready;
     std::function<void()> on_started;
+    // Called when a window or browser could not be opened; the server keeps running.
+    std::function<void(const Error&)> on_open_failed;
 };
 
 [[nodiscard]] Result<void> run_desktop_application(

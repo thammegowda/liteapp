@@ -146,8 +146,10 @@ public:
     void get(std::string path, Handler handler);
     void post(std::string path, Handler handler);
     void websocket(std::string path, WebSocketHandler handler, WebSocketOptions options = {});
-    [[nodiscard]] Result<void> serve_static(const std::filesystem::path& root);
+    // Serves a filesystem at "/", with index.html for "/".
     [[nodiscard]] Result<void> serve_static(vfs::FileSystem filesystem);
+    // Serves a ZIP archive, typically one embedded by liteapp_embed_archive() or liteapp_embed_manifest().
+    [[nodiscard]] Result<void> serve_archive(std::span<const std::byte> archive);
     [[nodiscard]] Result<void> serve_files(std::span<const StaticFile> files);
     [[nodiscard]] Result<void> serve_manifest(
         const std::filesystem::path& root,

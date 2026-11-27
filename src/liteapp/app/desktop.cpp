@@ -6,6 +6,18 @@
 #include "liteapp/platform/webview_window.h"
 
 namespace liteapp {
+namespace {
+
+bool local_display() {
+    if (platform::environment("SSH_CONNECTION") || platform::environment("SSH_TTY")) return false;
+#if defined(__linux__)
+    return platform::environment("DISPLAY") || platform::environment("WAYLAND_DISPLAY");
+#else
+    return true;
+#endif
+}
+
+}  // namespace
 
 Result<void> run_desktop_application(HttpServer& server, DesktopApplicationOptions options) {
     if (options.app_id.empty() || options.title.empty()) {
@@ -19,7 +31,7 @@ Result<void> run_desktop_application(HttpServer& server, DesktopApplicationOptio
     const auto launch_url = server.local_launch_url(*port);
     if (options.on_ready) options.on_ready(launch_url);
 
-    if (!options.development && options.open_window) {
+    if (!options.development && options.open_window && local_display()) {
         if (platform::webview_window_supported()) {
             const auto opened = platform::run_webview_window({
                 .app_id = std::move(options.app_id),
@@ -32,11 +44,13 @@ Result<void> run_desktop_application(HttpServer& server, DesktopApplicationOptio
                 .minimum_width = options.minimum_width,
                 .minimum_height = options.minimum_height,
             });
-            server.stop();
-            if (!opened) return std::unexpected(opened.error());
-        } else {
-            const auto opened = platform::open_url(launch_url);
-            if (!opened) return std::unexpected(opened.error());
+            if (opened) {
+                server.stop();
+                return running->wait();
+            }
+            if (options.on_open_failed) options.on_open_failed(opened.error());
+        } else if (const auto opened = platform::open_url(launch_url); !opened) {
+            if (options.on_open_failed) options.on_open_failed(opened.error());
         }
     }
     return running->wait();

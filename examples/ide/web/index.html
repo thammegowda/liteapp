@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiteApp IDE</title>
+  <link rel="stylesheet" href="liteapp/libs/xterm/xterm.css">
+  <link rel="stylesheet" href="liteapp/ide/ide.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body class="ide">
+  <header class="topbar">
+    <div class="brand">LiteApp IDE</div>
+    <div class="workspace" id="workspace-name"></div>
+    <div class="spacer"></div>
+    <button class="ghost small" id="theme"></button>
+    <button class="ghost small" id="toggle-terminal" title="Toggle terminal (Ctrl+`)">Terminal</button>
+  </header>
+
+  <main class="columns">
+    <aside class="sidebar">
+      <nav class="sidebar-tabs" role="tablist">
+        <button role="tab" data-panel="files" class="active">Files</button>
+        <button role="tab" data-panel="changes">Changes <span class="count" id="changes-count"></span></button>
+      </nav>
+      <section class="panel active" data-panel="files">
+        <div class="panel-actions">
+          <button class="ghost small" id="new-file">+ File</button>
+          <button class="ghost small" id="refresh-files">Refresh</button>
+        </div>
+        <div class="tree" id="file-tree"></div>
+      </section>
+      <section class="panel" data-panel="changes">
+        <div class="panel-actions"><button class="ghost small" id="refresh-changes">Refresh</button></div>
+        <div id="changes-list"></div>
+      </section>
+    </aside>
+    <div class="splitter" data-resize="--sidebar" data-edge="left" data-min="160"></div>
+
+    <section class="center">
+      <div class="editor-tabs" id="editor-tabs"></div>
+      <div class="editor-area" id="editor-area">
+        <div class="welcome" id="welcome">
+          <h1>LiteApp IDE</h1>
+          <p>Open a file from the tree. Ctrl/⌘+S saves; Ctrl+` toggles the terminal.</p>
+        </div>
+      </div>
+      <div class="splitter horizontal" id="terminal-splitter" data-resize="--terminal" data-edge="bottom"
+        data-container=".center" data-min="80" hidden></div>
+      <div class="terminal-panel" id="terminal-panel" hidden>
+        <div class="terminal-bar"><span>Terminal</span><div class="spacer"></div>
+          <button class="ghost small" id="restart-terminal">Restart</button>
+          <button class="ghost small" id="close-terminal">Hide</button></div>
+        <div class="terminal-host" id="terminal-host"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar"><span id="status"></span></footer>
+  <div class="banner" id="banner" hidden></div>
+</body>
+</html>

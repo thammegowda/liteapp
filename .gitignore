@@ -1,3 +1,7 @@
 build-*/
 build/
 tmp*
+node_modules/
+.history*
+libs/json/
+libs/googletest/

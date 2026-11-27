@@ -34,9 +34,10 @@ web/services.mjs       shared application service definitions
 web/wasm-worker.mjs    Wasm worker host boundary
 web/webgpu-worker.mjs  WebGPU worker host boundary
 web/index.html         minimal shared UI
-web/assets.txt         explicit development asset manifest
+web/assets.txt         every served file, embedded by liteapp_embed_manifest()
 ```
 
-For a production app, embed `web/` with `liteapp_embed_archive()`, mount it
-through `liteapp::vfs::FileSystem`, and replace the example echo/status methods
-with application services.
+The build embeds the files listed in `web/assets.txt` with `liteapp_embed_manifest()`
+and the host serves them with `HttpServer::serve_archive()`; during development,
+`HttpServer::serve_manifest()` can serve the same manifest from a checkout. Replace
+the example echo/status methods with application services.

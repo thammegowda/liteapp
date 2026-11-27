@@ -143,6 +143,8 @@ Response virtual_file_response(const vfs::FileSystem& filesystem, std::string_vi
     };
 }
 
+constexpr std::string_view LAUNCH_PREFIX = "/launch/";
+
 httplib::Server::HandlerResponse enforce_local_access(
     const ServerOptions& options,
     std::atomic_bool& launch_claimed,
@@ -152,20 +154,32 @@ httplib::Server::HandlerResponse enforce_local_access(
         return httplib::Server::HandlerResponse::Unhandled;
     }
 
-    const auto authority = options.host + ':' + std::to_string(request.local_port);
-    if (request.get_header_value("Host") != authority) {
+    // Port forwarders (VS Code, SSH) present a loopback server as localhost. Remote sites cannot rebind either
+    // name, so both are accepted for a loopback host.
+    const auto port = std::to_string(request.local_port);
+    const bool loopback = options.host == "127.0.0.1" || options.host == "localhost";
+    const auto allowed = [&](std::string_view authority) {
+        return authority == options.host + ':' + port ||
+               (loopback && (authority == "127.0.0.1:" + port || authority == "localhost:" + port));
+    };
+    if (!allowed(request.get_header_value("Host"))) {
         apply_response(response, Response::json(R"({"error":"invalid local Host header"})", 403));
         return httplib::Server::HandlerResponse::Handled;
     }
     const auto origin = request.get_header_value("Origin");
-    if (!origin.empty() && origin != "http://" + authority) {
+    if (!origin.empty() && !(origin.starts_with("http://") && allowed(std::string_view(origin).substr(7)))) {
         apply_response(response, Response::json(R"({"error":"invalid local Origin header"})", 403));
         return httplib::Server::HandlerResponse::Handled;
     }
 
-    if (request.path == "/" && request.has_param(options.local_access->query_parameter)) {
-        const auto supplied = request.get_param_value(options.local_access->query_parameter);
-        if (!constant_time_equal(supplied, options.local_access->token)) {
+    // The capability arrives once, as /?token=... or as /launch/TOKEN; the path form survives URL rewriting.
+    std::optional<std::string> supplied;
+    if (request.path == "/" && request.has_param(options.local_access->query_parameter))
+        supplied = request.get_param_value(options.local_access->query_parameter);
+    else if (request.path.starts_with(LAUNCH_PREFIX))
+        supplied = request.path.substr(LAUNCH_PREFIX.size());
+    if (supplied) {
+        if (!constant_time_equal(*supplied, options.local_access->token)) {
             apply_response(response, Response::json(R"({"error":"invalid local launch capability"})", 403));
             return httplib::Server::HandlerResponse::Handled;
         }
@@ -387,17 +401,6 @@ void HttpServer::websocket(std::string path, WebSocketHandler handler, WebSocket
         });
 }
 
-Result<void> HttpServer::serve_static(const std::filesystem::path& root) {
-    std::error_code error;
-    if (!std::filesystem::is_directory(root, error)) {
-        return std::unexpected(Error{"invalid_assets", "static asset directory does not exist: " + root.string()});
-    }
-    if (!impl_->server->set_mount_point("/", root.string())) {
-        return std::unexpected(Error{"invalid_assets", "failed to mount static asset directory: " + root.string()});
-    }
-    return {};
-}
-
 Result<void> HttpServer::serve_static(vfs::FileSystem filesystem) {
     impl_->server->Get(R"(/.*)", [filesystem = std::move(filesystem)](const auto& request, auto& response) {
         const auto path = request.path == "/" ? std::string_view{"index.html"}
@@ -405,6 +408,12 @@ Result<void> HttpServer::serve_static(vfs::FileSystem filesystem) {
         apply_response(response, virtual_file_response(filesystem, path));
     });
     return {};
+}
+
+Result<void> HttpServer::serve_archive(std::span<const std::byte> archive) {
+    auto filesystem = vfs::FileSystem::from_zip(archive);
+    if (!filesystem) return std::unexpected(filesystem.error());
+    return serve_static(std::move(*filesystem));
 }
 
 Result<void> HttpServer::serve_files(std::span<const StaticFile> files) {
@@ -476,17 +485,20 @@ Result<void> HttpServer::serve_manifest(
         if (entry.empty() || entry.starts_with('#')) continue;
         const auto separator = entry.find('\t');
         const auto path = separator == std::string::npos ? entry : entry.substr(separator + 1U);
-        auto route = separator == std::string::npos
-                         ? path == options.index_file ? options.route_prefix : options.route_prefix + path
-                         : entry.substr(0, separator);
+        // A route is the path itself, or an explicit first column; relative routes share the route prefix, so one
+        // manifest can also drive liteapp_embed_archive.
+        auto route = separator == std::string::npos ? path : entry.substr(0, separator);
+        if (!route.empty() && route.front() != '/') route = options.route_prefix + route;
         if (!relative_asset_path_valid(path) || route.empty() || route.front() != '/' ||
             route.find_first_of("?#") != std::string::npos) {
             return std::unexpected(
                 Error{"invalid_assets", "static asset manifest contains an invalid entry: " + entry});
         }
-        if (files.size() >= options.max_files) {
+        const bool index = route == options.route_prefix + options.index_file;
+        if (files.size() + (index ? 2U : 1U) > options.max_files) {
             return std::unexpected(Error{"invalid_assets", "static asset manifest contains too many files"});
         }
+        if (index) files.push_back({.route = options.route_prefix, .path = root / path});
         files.push_back({
             .route = std::move(route),
             .path = root / path,
@@ -556,8 +568,7 @@ void HttpServer::wait_until_ready() const {
 std::string HttpServer::local_launch_url(int port) const {
     if (port <= 0 || port > 65535) return {};
     auto result = "http://" + options_.host + ':' + std::to_string(port) + '/';
-    if (options_.local_access)
-        result += '?' + options_.local_access->query_parameter + '=' + options_.local_access->token;
+    if (options_.local_access) result += std::string(LAUNCH_PREFIX.substr(1)) + options_.local_access->token;
     return result;
 }
 

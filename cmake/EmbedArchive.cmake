@@ -98,3 +98,55 @@ function(liteapp_link_embedded_resources target)
         endif()
     endif()
 endfunction()
+
+# Embeds the files a static asset manifest lists, in the format HttpServer::serve_manifest() reads: one entry per
+# line, either PATH or ROUTE<TAB>PATH, with PATH relative to BASE and "#" starting a comment. Each file is staged at
+# its route, so the embedded archive (served with HttpServer::serve_archive()) and a development server reading the
+# same manifest from a checkout serve identical URLs. A macro, like liteapp_embed_archive(), so it runs at file scope.
+macro(liteapp_embed_manifest)
+    cmake_parse_arguments(_liteapp_manifest "" "TARGET;NAMESPACE;HEADER;MANIFEST;BASE" "" ${ARGN})
+    foreach(_liteapp_required IN ITEMS TARGET NAMESPACE HEADER MANIFEST BASE)
+        if(NOT _liteapp_manifest_${_liteapp_required})
+            message(FATAL_ERROR "liteapp_embed_manifest requires ${_liteapp_required}")
+        endif()
+    endforeach()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_liteapp_manifest_MANIFEST}")
+    file(STRINGS "${_liteapp_manifest_MANIFEST}" _liteapp_manifest_entries)
+    set(_liteapp_manifest_stage "${CMAKE_CURRENT_BINARY_DIR}/${_liteapp_manifest_TARGET}-stage")
+    set(_liteapp_manifest_routes)
+    foreach(_liteapp_entry IN LISTS _liteapp_manifest_entries)
+        if(_liteapp_entry STREQUAL "" OR _liteapp_entry MATCHES "^#")
+            continue()
+        endif()
+        string(FIND "${_liteapp_entry}" "\t" _liteapp_separator)
+        if(_liteapp_separator EQUAL -1)
+            set(_liteapp_route "${_liteapp_entry}")
+            set(_liteapp_path "${_liteapp_entry}")
+        else()
+            string(SUBSTRING "${_liteapp_entry}" 0 ${_liteapp_separator} _liteapp_route)
+            math(EXPR _liteapp_separator "${_liteapp_separator} + 1")
+            string(SUBSTRING "${_liteapp_entry}" ${_liteapp_separator} -1 _liteapp_path)
+        endif()
+        string(REGEX REPLACE "^/" "" _liteapp_route "${_liteapp_route}")
+        set(_liteapp_input "${_liteapp_manifest_BASE}/${_liteapp_path}")
+        if(_liteapp_route STREQUAL "" OR _liteapp_route MATCHES "(^|/)\\.\\.?(/|$)" OR IS_ABSOLUTE "${_liteapp_path}"
+           OR _liteapp_path MATCHES "(^|/)\\.\\.(/|$)" OR NOT EXISTS "${_liteapp_input}"
+           OR _liteapp_route IN_LIST _liteapp_manifest_routes)
+            message(FATAL_ERROR "Invalid entry in ${_liteapp_manifest_MANIFEST}: ${_liteapp_entry}")
+        endif()
+        set(_liteapp_output "${_liteapp_manifest_stage}/${_liteapp_route}")
+        get_filename_component(_liteapp_output_directory "${_liteapp_output}" DIRECTORY)
+        add_custom_command(OUTPUT "${_liteapp_output}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${_liteapp_output_directory}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_liteapp_input}" "${_liteapp_output}"
+            DEPENDS "${_liteapp_input}" VERBATIM)
+        list(APPEND _liteapp_manifest_routes "${_liteapp_route}")
+    endforeach()
+    liteapp_embed_archive(
+        TARGET ${_liteapp_manifest_TARGET}
+        NAMESPACE ${_liteapp_manifest_NAMESPACE}
+        HEADER ${_liteapp_manifest_HEADER}
+        ROOT "${_liteapp_manifest_stage}"
+        FILES ${_liteapp_manifest_routes}
+    )
+endmacro()

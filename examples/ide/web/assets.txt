@@ -1,0 +1,21 @@
+# Served route, then the file relative to the LiteApp checkout. The build embeds exactly these files
+# (liteapp_embed_manifest); LITEAPP_IDE_SOURCE=<checkout> serves them from disk instead (serve_manifest).
+index.html	examples/ide/web/index.html
+app.mjs	examples/ide/web/app.mjs
+style.css	examples/ide/web/style.css
+liteapp/host/connection.mjs	web/host/connection.mjs
+liteapp/ide/editor.mjs	web/ide/editor.mjs
+liteapp/ide/file-tree.mjs	web/ide/file-tree.mjs
+liteapp/ide/ide.css	web/ide/ide.css
+liteapp/ide/splitters.mjs	web/ide/splitters.mjs
+liteapp/ide/terminal.mjs	web/ide/terminal.mjs
+liteapp/ide/theme.mjs	web/ide/theme.mjs
+liteapp/libs/codemirror/codemirror.mjs	web/libs/codemirror/codemirror.mjs
+liteapp/libs/codemirror/LICENSE	web/libs/codemirror/LICENSE
+liteapp/libs/xterm/addon-fit.mjs	web/libs/xterm/addon-fit.mjs
+liteapp/libs/xterm/LICENSE	web/libs/xterm/LICENSE
+liteapp/libs/xterm/xterm.css	web/libs/xterm/xterm.css
+liteapp/libs/xterm/xterm.mjs	web/libs/xterm/xterm.mjs
+liteapp/transport/channel.mjs	web/transport/channel.mjs
+liteapp/transport/protocol.mjs	web/transport/protocol.mjs
+liteapp/transport/websocket-transport.mjs	web/transport/websocket-transport.mjs
