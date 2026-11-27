@@ -287,12 +287,37 @@ WebSocket (or any transport an `open` function returns), whose `call` the compon
 | `terminal.mjs` | `TerminalPanel`: xterm.js over the terminal service |
 | `theme.mjs`, `splitters.mjs`, `ide.css` | dark/light/system themes, resizable panes, and the shared chrome styles |
 
-CodeMirror 6 and xterm.js are vendored under `web/libs/` so applications never need Node.js to build. To update
-them, change the exact pins in [`web/tools/editor-bundle/package.json`](web/tools/editor-bundle/package.json) and run
-`cd web/tools/editor-bundle && npm ci --ignore-scripts && node build.mjs`. CodeMirror is bundled into one minified
-module (`web/libs/codemirror/VERSIONS` lists the packages); xterm.js files are copied unmodified. Both are MIT
-licensed (`LICENSE` beside each). CodeMirror and xterm.js insert style sheets at run time, so a page using them
-needs `style-src 'self' 'unsafe-inline'` in its content security policy.
+CodeMirror and xterm.js insert style sheets at run time, so a page using them needs `style-src 'self'
+'unsafe-inline'` in its content security policy.
+
+## Markdown
+
+`web/markdown/markdown.mjs` renders untrusted text, such as model output, into sanitized HTML (DOMPurify):
+GitHub-flavored Markdown (marked), syntax-highlighted code with Copy buttons (highlight.js), and LaTeX math
+(`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) rendered by Temml as native MathML, so no math fonts or layout scripts are
+needed. A dollar sign followed by a space or a digit after the closing sign stays text, so prices are not mistaken
+for math. `renderStreamingMarkdown()` renders text as it arrives and holds back an unfinished code block or display
+formula until it closes. Applications can render diagram code blocks (for example Mermaid) through a
+`renderDiagram` hook. Include `web/markdown/markdown.css` for math, highlighting and code-block styles; it follows
+`data-theme="dark"|"light"` on `<html>` when set and the system color scheme otherwise.
+
+## Vendored browser libraries
+
+Every library under `web/libs/` is checked in, so building and running an application never needs Node.js or
+network access:
+
+| Directory | Contents | License |
+|---|---|---|
+| `codemirror/` | 19 `@codemirror/*` packages (`VERSIONS`) bundled into one minified ES module | MIT |
+| `xterm/` | `@xterm/xterm` and `@xterm/addon-fit`, unmodified | MIT |
+| `marked/` | `marked` `lib/marked.esm.js`, unmodified | MIT |
+| `dompurify/` | `dompurify` `dist/purify.es.mjs`, unmodified | Apache-2.0 OR MPL-2.0 |
+| `highlightjs/` | `@highlightjs/cdn-assets` `es/highlight.min.js`, unmodified | BSD-3-Clause |
+| `temml/` | `temml` `dist/temml.mjs` minified, with `Temml-Local.css` (as `temml.css`) and `Temml.woff2` | MIT |
+
+[`web/tools/vendor/package.json`](web/tools/vendor/package.json) pins exact versions and `package-lock.json` their
+archive integrity. To update, change the pins and run `cd web/tools/vendor && npm ci --ignore-scripts &&
+node build.mjs`, then commit the regenerated `web/libs/` with the lock file.
 
 ## Filesystem events
 
