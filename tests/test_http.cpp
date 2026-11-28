@@ -4,7 +4,10 @@
 #include <fstream>
 #include <string>
 #include <thread>
-
+#if !defined(_WIN32)
+#include <signal.h>
+#include <unistd.h>
+#endif
 #include <gtest/gtest.h>
 #include <httplib.h>
 
@@ -38,6 +41,24 @@ TEST(FrameworkApp, RunsHeadlessDesktopLifecycleCallbacks) {
     EXPECT_TRUE(started);
     EXPECT_TRUE(ready);
 }
+
+#if !defined(_WIN32)
+TEST(FrameworkApp, StopsOnTerminationSignal) {
+    auto created = liteapp::HttpServer::create();
+    ASSERT_TRUE(created);
+    auto server = std::move(*created);
+    bool stopping = false;
+    liteapp::DesktopApplicationOptions options;
+    options.app_id = "liteapp.test";
+    options.title = "LiteApp test";
+    options.development = true;
+    options.on_ready = [](std::string_view) { ::kill(::getpid(), SIGTERM); };
+    options.on_stopping = [&] { stopping = true; };
+    const auto ran = liteapp::run_desktop_application(server, std::move(options));
+    ASSERT_TRUE(ran);
+    EXPECT_TRUE(stopping);
+}
+#endif
 
 TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     TemporaryDirectory temporary;

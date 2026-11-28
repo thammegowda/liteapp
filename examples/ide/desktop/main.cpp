@@ -92,9 +92,11 @@ auto main(int argc, char** argv) -> int {
     options.on_open_failed = [](const liteapp::Error& failure) {
         std::cerr << "Could not open a browser (" << failure.message << "); open the link above yourself." << std::endl;
     };
+    options.on_stopping = [&files, &events] {
+        files.close();
+        events.close();
+    };
     const auto ran = liteapp::run_desktop_application(server, std::move(options));
-    files.close();
-    events.close();
     if (!ran) {
         std::cerr << ran.error().message << '\n';
         return 1;

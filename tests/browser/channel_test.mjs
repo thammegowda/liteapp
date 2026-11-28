@@ -134,26 +134,27 @@ test('returns structured errors for unknown methods', async t => {
         channel.dispose();
         router.dispose();
     });
-
-    test('accepts caller-owned request IDs and rejects active duplicates', async t => {
-        const {channel, router} = runtime();
-        t.after(() => {
-            channel.dispose();
-            router.dispose();
-        });
-        let release;
-        router.register('hold', () => new Promise(resolve => { release = resolve; }));
-        const first = channel.request('hold', {}, {id: 'client-request'});
-        await new Promise(resolve => setImmediate(resolve));
-        await assert.rejects(channel.request('hold', {}, {id: 'client-request'}), /already active/);
-        release({ok: true});
-        assert.deepEqual(await first, {ok: true});
-    });
     await assert.rejects(
         channel.request('missing.method', {}),
         error => error.name === 'RemoteError' && error.code === 'unknown_method' &&
             error.message === 'Unknown service method: missing.method',
     );
+});
+
+test('accepts caller-owned request IDs and rejects active duplicates', async t => {
+    const {channel, router} = runtime();
+    t.after(() => {
+        channel.dispose();
+        router.dispose();
+    });
+    let release;
+    router.register('hold', () => new Promise(resolve => { release = resolve; }));
+    const first = channel.request('hold', {}, {id: 'client-request'});
+    for (let attempt = 0; attempt < 20 && !release; ++attempt) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(typeof release, 'function', 'the service received the first request');
+    await assert.rejects(channel.request('hold', {}, {id: 'client-request'}), /already active/);
+    release({ok: true});
+    assert.deepEqual(await first, {ok: true});
 });
 
 test('returns application service errors without exposing framework internals', async t => {

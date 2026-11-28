@@ -44,14 +44,15 @@ liteapp/
   libs/           pinned native dependencies
   src/liteapp/    C++ SDK; paths match namespaces
   tests/          native and browser security/behavior tests
-  web/            dependency-free browser channel and host transports; ide/ components
+  web/            dependency-free browser channel and host transports; ide/, markdown/ and media/ components
 ```
 
 Applications include headers such as `liteapp/http/server.h` and link `liteapp::core`, `liteapp::db`, `liteapp::fs`, `liteapp::http`, `liteapp::platform`, `liteapp::vfs`, or `liteapp::workspace`.
 
 Native desktop applications can link `liteapp::app` and call
 `run_desktop_application()` after registering their routes. LiteApp owns
-bind/start/readiness, optional WebView or browser launch, profile paths, and
+bind/start/readiness, optional WebView or browser launch, profile paths, Ctrl-C
+and termination signals (`on_stopping` runs before the server stops), and
 server shutdown/wait behavior.
 
 Android applications use the core, VFS, and in-process service targets without
@@ -300,6 +301,19 @@ for math. `renderStreamingMarkdown()` renders text as it arrives and holds back 
 formula until it closes. Applications can render diagram code blocks (for example Mermaid) through a
 `renderDiagram` hook. Include `web/markdown/markdown.css` for math, highlighting and code-block styles; it follows
 `data-theme="dark"|"light"` on `<html>` when set and the system color scheme otherwise.
+
+## Media
+
+`web/media/` holds the browser plumbing for speech and vision apps:
+
+- `audio.mjs`: `openMicrophone({onFrame})` captures 20 ms frames of 16 kHz mono Int16 PCM through
+  `capture-worklet.mjs`, which mixes, low-pass filters and downsamples. `openPlayer()` opens a resumed audio context with
+  a streaming `playback-worklet.mjs` node that queues Float32 chunks, pauses and resumes, and reports buffered frames,
+  tagged segments and drain. `resample()` and `pcm16ToFloat32()` convert between rates and formats.
+- `images.mjs`: `prepareImage(file)` returns a PNG or JPEG Blob, re-encoding other formats and downscaling large images.
+- `base64.mjs`: base64 and data URL conversion for binary data in JSON messages.
+
+The worklets load relative to `audio.mjs`, so serve `media/` as one directory.
 
 ## Vendored browser libraries
 
