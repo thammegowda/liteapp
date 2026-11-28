@@ -84,6 +84,7 @@ target_link_libraries(liteapp_sqlite PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 add_library(liteapp_core
     src/liteapp/core/base64.cpp
     src/liteapp/core/random.cpp
+    src/liteapp/core/sha256.cpp
 )
 add_library(liteapp::core ALIAS liteapp_core)
 target_include_directories(liteapp_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

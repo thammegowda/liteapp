@@ -197,6 +197,11 @@ httplib::Server::HandlerResponse enforce_local_access(
         return httplib::Server::HandlerResponse::Handled;
     }
 
+    const auto& open = options.local_access->open_paths;
+    if (request.method == "GET" && std::find(open.begin(), open.end(), request.path) != open.end()) {
+        return httplib::Server::HandlerResponse::Unhandled;
+    }
+
     const auto cookies = request.get_header_value("Cookie");
     const auto capability = cookie_value(cookies, options.local_access->cookie_name);
     if (!capability || !constant_time_equal(*capability, options.local_access->token)) {

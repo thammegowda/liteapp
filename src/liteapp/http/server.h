@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "liteapp/core/result.h"
 #include "liteapp/vfs/filesystem.h"
@@ -108,6 +109,9 @@ struct LocalAccess {
     std::string token;
     std::string cookie_name{"copilot_chats_access"};
     std::string query_parameter{"token"};
+    // GET paths served without the cookie, such as an OAuth redirect URI: a redirect from another site arrives
+    // without the SameSite=Strict cookie. Their handlers must check the request themselves (e.g. the OAuth state).
+    std::vector<std::string> open_paths{};
 };
 
 struct ServerOptions {

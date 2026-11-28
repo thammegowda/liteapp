@@ -68,13 +68,15 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
         .host = "127.0.0.1",
         .port = 0,
         .max_body_bytes = 1024,
-        .local_access = liteapp::LocalAccess{.token = "test-capability"},
+        .local_access = liteapp::LocalAccess{.token = "test-capability", .open_paths = {"/callback"}},
     });
     ASSERT_TRUE(created);
     auto server = std::move(*created);
     server.get("/private", [](const liteapp::Request&) {
         return liteapp::Response::json(R"({"ok":true})");
     });
+    server.get("/callback", [](const liteapp::Request&) { return liteapp::Response::text("back"); });
+    server.post("/callback", [](const liteapp::Request&) { return liteapp::Response::text("back"); });
     server.get("/query", [](const liteapp::Request& request) {
         return liteapp::Response::text(request.query_parameter("session"));
     });
@@ -94,6 +96,17 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     const auto rejected = client.Get("/private");
     ASSERT_TRUE(rejected);
     EXPECT_EQ(rejected->status, 403);
+
+    // An open path answers GET without the cookie (a redirect back from another site), and nothing else.
+    const auto redirected = client.Get("/callback?code=1");
+    ASSERT_TRUE(redirected);
+    EXPECT_EQ(redirected->status, 200);
+    const auto posted = client.Post("/callback", "", "text/plain");
+    ASSERT_TRUE(posted);
+    EXPECT_EQ(posted->status, 403);
+    const auto rebound = client.Get("/callback", httplib::Headers{{"Host", "example.com:" + std::to_string(*bound)}});
+    ASSERT_TRUE(rebound);
+    EXPECT_EQ(rebound->status, 403);
 
     EXPECT_EQ(server.local_launch_url(*bound),
               "http://127.0.0.1:" + std::to_string(*bound) + "/launch/test-capability");
