@@ -82,7 +82,9 @@ target_compile_definitions(liteapp_sqlite PRIVATE
 target_link_libraries(liteapp_sqlite PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 
 add_library(liteapp_core
+    src/liteapp/core/base64.cpp
     src/liteapp/core/random.cpp
+    src/liteapp/core/sha256.cpp
 )
 add_library(liteapp::core ALIAS liteapp_core)
 target_include_directories(liteapp_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -181,7 +183,7 @@ if(NOT ANDROID)
     liteapp_harden(liteapp_app)
 endif()
 
-add_library(liteapp_service src/liteapp/service/router.cpp)
+add_library(liteapp_service src/liteapp/service/router.cpp src/liteapp/service/event_hub.cpp)
 add_library(liteapp::service ALIAS liteapp_service)
 target_include_directories(liteapp_service PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(liteapp_service PUBLIC liteapp::core liteapp::json)
@@ -191,6 +193,24 @@ else()
     target_link_libraries(liteapp_service PUBLIC liteapp::http)
 endif()
 liteapp_harden(liteapp_service)
+
+# IDE back end: a root-confined workspace, Git queries, pseudo-terminals and their service methods (POSIX; other
+# platforms build stubs that report "unsupported").
+if(NOT ANDROID)
+    add_library(liteapp_workspace
+        src/liteapp/workspace/git.cpp
+        src/liteapp/workspace/services.cpp
+        src/liteapp/workspace/terminal.cpp
+        src/liteapp/workspace/workspace.cpp
+    )
+    add_library(liteapp::workspace ALIAS liteapp_workspace)
+    target_include_directories(liteapp_workspace PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(liteapp_workspace PUBLIC liteapp::core liteapp::service PRIVATE Threads::Threads)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(liteapp_workspace PRIVATE util)
+    endif()
+    liteapp_harden(liteapp_workspace)
+endif()
 
 if(LITEAPP_BUILD_TESTS)
     if(NOT EXISTS "${LITEAPP_GOOGLETEST_SOURCE}/CMakeLists.txt")

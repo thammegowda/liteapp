@@ -1,9 +1,13 @@
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
-
+#if !defined(_WIN32)
+#include <signal.h>
+#include <unistd.h>
+#endif
 #include <gtest/gtest.h>
 #include <httplib.h>
 
@@ -12,29 +16,9 @@
 #include "liteapp/app/desktop.h"
 #include "liteapp/http/server.h"
 #include "liteapp/vfs/filesystem.h"
+#include "support.h"
 
-namespace {
-
-class TemporaryDirectory {
-public:
-    TemporaryDirectory() {
-        const auto id = std::chrono::steady_clock::now().time_since_epoch().count();
-        path = std::filesystem::temp_directory_path() / ("liteapp-http-" + std::to_string(id));
-        std::filesystem::create_directories(path);
-    }
-
-    ~TemporaryDirectory() {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-
-    TemporaryDirectory(const TemporaryDirectory&) = delete;
-    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
-
-    std::filesystem::path path;
-};
-
-}  // namespace
+using liteapp::testing::TemporaryDirectory;
 
 TEST(FrameworkApp, RunsHeadlessDesktopLifecycleCallbacks) {
     auto created = liteapp::HttpServer::create();
@@ -58,6 +42,24 @@ TEST(FrameworkApp, RunsHeadlessDesktopLifecycleCallbacks) {
     EXPECT_TRUE(ready);
 }
 
+#if !defined(_WIN32)
+TEST(FrameworkApp, StopsOnTerminationSignal) {
+    auto created = liteapp::HttpServer::create();
+    ASSERT_TRUE(created);
+    auto server = std::move(*created);
+    bool stopping = false;
+    liteapp::DesktopApplicationOptions options;
+    options.app_id = "liteapp.test";
+    options.title = "LiteApp test";
+    options.development = true;
+    options.on_ready = [](std::string_view) { ::kill(::getpid(), SIGTERM); };
+    options.on_stopping = [&] { stopping = true; };
+    const auto ran = liteapp::run_desktop_application(server, std::move(options));
+    ASSERT_TRUE(ran);
+    EXPECT_TRUE(stopping);
+}
+#endif
+
 TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     TemporaryDirectory temporary;
     std::ofstream{temporary.path / "index.html"} << "protected UI";
@@ -66,20 +68,23 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
         .host = "127.0.0.1",
         .port = 0,
         .max_body_bytes = 1024,
-        .local_access = liteapp::LocalAccess{.token = "test-capability"},
+        .local_access = liteapp::LocalAccess{.token = "test-capability", .open_paths = {"/callback"}},
     });
     ASSERT_TRUE(created);
     auto server = std::move(*created);
     server.get("/private", [](const liteapp::Request&) {
         return liteapp::Response::json(R"({"ok":true})");
     });
+    server.get("/callback", [](const liteapp::Request&) { return liteapp::Response::text("back"); });
+    server.post("/callback", [](const liteapp::Request&) { return liteapp::Response::text("back"); });
     server.get("/query", [](const liteapp::Request& request) {
         return liteapp::Response::text(request.query_parameter("session"));
     });
     server.post("/action", [](const liteapp::Request& request) {
         return liteapp::Response::text(request.method, 204);
     });
-    ASSERT_TRUE(server.serve_static(temporary.path));
+    const std::array index{liteapp::StaticFile{.route = "/", .path = temporary.path / "index.html"}};
+    ASSERT_TRUE(server.serve_files(index));
 
     const auto bound = server.bind();
     ASSERT_TRUE(bound);
@@ -92,8 +97,28 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     ASSERT_TRUE(rejected);
     EXPECT_EQ(rejected->status, 403);
 
+    // An open path answers GET without the cookie (a redirect back from another site), and nothing else.
+    const auto redirected = client.Get("/callback?code=1");
+    ASSERT_TRUE(redirected);
+    EXPECT_EQ(redirected->status, 200);
+    const auto posted = client.Post("/callback", "", "text/plain");
+    ASSERT_TRUE(posted);
+    EXPECT_EQ(posted->status, 403);
+    const auto rebound = client.Get("/callback", httplib::Headers{{"Host", "example.com:" + std::to_string(*bound)}});
+    ASSERT_TRUE(rebound);
+    EXPECT_EQ(rebound->status, 403);
+
     EXPECT_EQ(server.local_launch_url(*bound),
-              "http://127.0.0.1:" + std::to_string(*bound) + "/?token=test-capability");
+              "http://127.0.0.1:" + std::to_string(*bound) + "/launch/test-capability");
+
+    // Forwarded ports arrive as localhost; other names are still rejected.
+    const auto foreign = client.Get("/private", httplib::Headers{{"Host", "example.com:" + std::to_string(*bound)}});
+    ASSERT_TRUE(foreign);
+    EXPECT_EQ(foreign->status, 403);
+    const auto wrong_path = client.Get(
+        "/launch/wrong-capability", httplib::Headers{{"Host", "localhost:" + std::to_string(*bound)}});
+    ASSERT_TRUE(wrong_path);
+    EXPECT_EQ(wrong_path->status, 403);
 
     const auto invalid_launch = client.Get("/?token=wrong-capability");
     ASSERT_TRUE(invalid_launch);
@@ -109,6 +134,9 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     const auto replayed_launch = client.Get("/?token=test-capability");
     ASSERT_TRUE(replayed_launch);
     EXPECT_EQ(replayed_launch->status, 403);
+    const auto replayed_path = client.Get("/launch/test-capability");
+    ASSERT_TRUE(replayed_path);
+    EXPECT_EQ(replayed_path->status, 403);
 
     const httplib::Headers authorized{{"Cookie", "copilot_chats_access=test-capability"}};
     const auto accepted = client.Get("/private", authorized);
@@ -117,6 +145,13 @@ TEST(FrameworkHttp, ProtectsLocalRoutesWithCapabilityCookie) {
     EXPECT_EQ(accepted->get_header_value("Cache-Control"), "no-store");
     EXPECT_EQ(accepted->get_header_value("X-Content-Type-Options"), "nosniff");
     EXPECT_EQ(accepted->get_header_value("X-Frame-Options"), "DENY");
+
+    const auto forwarded = client.Get(
+        "/private", httplib::Headers{{"Cookie", "copilot_chats_access=test-capability"},
+                                     {"Host", "localhost:" + std::to_string(*bound)},
+                                     {"Origin", "http://localhost:" + std::to_string(*bound)}});
+    ASSERT_TRUE(forwarded);
+    EXPECT_EQ(forwarded->status, 200);
 
     const auto still_rejected = client.Get("/private");
     ASSERT_TRUE(still_rejected);
@@ -238,7 +273,7 @@ TEST(FrameworkHttp, ServesValidatedStaticManifestWithInferredTypes) {
     std::ofstream{temporary.path / "icons" / "logo.svg"} << "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
     const auto manifest = temporary.path / "assets.txt";
     std::ofstream{manifest}
-        << "# application assets\nindex.html\napp.mjs\n/brand.svg\ticons/logo.svg\n";
+        << "# application assets\nindex.html\napp.mjs\n/brand.svg\ticons/logo.svg\nlib/app.mjs\tapp.mjs\n";
 
     auto created = liteapp::HttpServer::create();
     ASSERT_TRUE(created);
@@ -258,6 +293,10 @@ TEST(FrameworkHttp, ServesValidatedStaticManifestWithInferredTypes) {
     ASSERT_TRUE(module);
     EXPECT_EQ(module->status, 200);
     EXPECT_EQ(module->get_header_value("Content-Type"), "text/javascript; charset=utf-8");
+    EXPECT_EQ(client.Get("/index.html")->status, 200);
+    const auto relative = client.Get("/lib/app.mjs");
+    ASSERT_TRUE(relative);
+    EXPECT_EQ(relative->status, 200) << "a relative route shares the route prefix";
     const auto icon = client.Get("/brand.svg");
     ASSERT_TRUE(icon);
     EXPECT_EQ(icon->status, 200);
@@ -336,4 +375,27 @@ TEST(FrameworkHttp, RunningHandleIsSafeAfterServerDestruction) {
 
     ASSERT_TRUE(running);
     EXPECT_TRUE(running->wait());
+}
+TEST(FrameworkHttp, StreamsResponseBodyAndHeaders) {
+    auto created = liteapp::HttpServer::create();
+    ASSERT_TRUE(created) << created.error().message;
+    auto server = std::move(*created);
+    server.get("/events", [](const liteapp::Request&) {
+        return liteapp::Response::streamed("text/event-stream", [](const auto& write) {
+            return write("data: first\n\n") && write("data: [DONE]\n\n");
+        });
+    });
+    const auto bound = server.bind();
+    ASSERT_TRUE(bound) << bound.error().message;
+    std::jthread server_thread{[&server] { static_cast<void>(server.listen_after_bind()); }};
+    server.wait_until_ready();
+
+    httplib::Client client{"127.0.0.1", *bound};
+    const auto response = client.Get("/events");
+    server.stop();
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200);
+    EXPECT_EQ(response->get_header_value("Content-Type"), "text/event-stream");
+    EXPECT_EQ(response->get_header_value("Cache-Control"), "no-store");
+    EXPECT_EQ(response->body, "data: first\n\ndata: [DONE]\n\n");
 }

@@ -40,18 +40,19 @@ with a port supplied by its native WebView shell.
 ```text
 liteapp/
   cmake/          compiler hardening, resource embedding, and toolchains
-  examples/       shared-UI host skeletons
+  examples/       shared-UI host skeletons and a minimal IDE
   libs/           pinned native dependencies
   src/liteapp/    C++ SDK; paths match namespaces
   tests/          native and browser security/behavior tests
-  web/            dependency-free browser channel and host transports
+  web/            dependency-free browser channel and host transports; ide/, markdown/ and media/ components
 ```
 
-Applications include headers such as `liteapp/http/server.h` and link `liteapp::core`, `liteapp::db`, `liteapp::fs`, `liteapp::http`, `liteapp::platform`, or `liteapp::vfs`.
+Applications include headers such as `liteapp/http/server.h` and link `liteapp::core`, `liteapp::db`, `liteapp::fs`, `liteapp::http`, `liteapp::platform`, `liteapp::vfs`, or `liteapp::workspace`.
 
 Native desktop applications can link `liteapp::app` and call
 `run_desktop_application()` after registering their routes. LiteApp owns
-bind/start/readiness, optional WebView or browser launch, profile paths, and
+bind/start/readiness, optional WebView or browser launch, profile paths, Ctrl-C
+and termination signals (`on_stopping` runs before the server stops), and
 server shutdown/wait behavior.
 
 Android applications use the core, VFS, and in-process service targets without
@@ -210,20 +211,23 @@ The bundled SQLite database is plaintext. Liteapp builds with in-memory temporar
 and links it into a target as a native binary resource. macOS and ELF platforms
 use assembler `.incbin`; Windows uses a target-named `RCDATA` resource. The C++
 compiler sees only a small generated `std::span` accessor and never parses asset
-byte initializers. Apps open those bytes with
-`liteapp::vfs::FileSystem::from_zip()` and mount the immutable filesystem through
-`HttpServer::serve_static()`. ZIP contents are validated and expanded into
+byte initializers. Apps serve those bytes with `HttpServer::serve_archive()`, or
+open them with `liteapp::vfs::FileSystem::from_zip()` to add routes such as
+`serve_file()` before `serve_static()`. ZIP contents are validated and expanded into
 shared memory on the first request; nothing is extracted to disk.
 Call `liteapp_link_embedded_resources(final_executable)` after creating each
 desktop executable. It is a no-op on macOS and ELF platforms; on Windows it
 adds every target-named `RCDATA` file directly to the final link, as required
 by the Visual Studio resource toolchain.
 
-Development servers can use `HttpServer::serve_manifest(root, manifest)` to
-mount an explicit newline-separated asset list. Routes are validated and MIME
-types are inferred by LiteApp. `index.html` maps to the route prefix root.
-`serve_files()` also infers MIME types whenever `StaticFile::content_type` is
-left empty.
+An asset manifest lists every served file once, as `PATH` or `ROUTE<TAB>PATH`
+per line (`#` starts a comment). `liteapp_embed_manifest(TARGET … MANIFEST …
+BASE …)` embeds exactly those files at their routes, and a development server
+can serve the same manifest from a checkout with
+`HttpServer::serve_manifest(base, manifest)`, so both builds serve identical
+URLs and UI edits need only a page reload. Relative routes share the route
+prefix, `index.html` is also served at the prefix root, and MIME types are
+inferred; `serve_files()` does the same for an explicit list.
 
 ## WebSockets
 
@@ -253,6 +257,81 @@ server.serve_static(*assets);
 ```
 
 The VFS rejects absolute, parent-relative, duplicate, encrypted, unsupported, oversized, and malformed entries before exposing content. Apps can lower the default archive, file-count, file-size, expanded-size, and path-length limits.
+
+## Workspaces and IDE components
+
+LiteApp includes the pieces of a light local IDE so applications (coding agents, notebooks, document tools) can
+show and edit a project directory without building an editor stack. [`examples/ide`](examples/ide/) composes them
+into a working file tree, tabbed editor with Git diffs, and terminal in about a hundred lines of application code.
+
+Native (`liteapp::workspace`, POSIX; other platforms build stubs that report `unsupported`):
+
+- `Workspace` confines every operation to one directory. Paths are resolved component by component from an open
+  root descriptor without following symlinks; absolute paths, `..` and `.git` are rejected. It lists, reads
+  (whole files or UTF-8-safe pages), atomically writes with modification-time conflict checks, creates
+  directories, and runs programs with a timeout, an output cap and process-group cleanup. It is not an OS sandbox:
+  programs run with the user's privileges.
+- `Git` reports `git status` relative to the workspace and reads committed text at `HEAD`.
+- `Terminals` runs interactive shells on pseudo-terminals, one reader thread each.
+- `WorkspaceServices` exposes all of the above as `fs.*`, `git.*` and `terminal.*` service methods (documented in
+  `workspace/services.h`); `liteapp::EventHub` (`liteapp::service`) broadcasts application events to every open
+  page and can replay a running operation to a page that connects late.
+
+Browser (`web/ide/`, plain ES modules; DOM elements and the call function are passed in). They pair with
+`web/host/connection.mjs`: a `Connection` with heartbeats, reconnection and broadcast events over the desktop
+WebSocket (or any transport an `open` function returns), whose `call` the components use.
+
+| Module | Provides |
+|---|---|
+| `file-tree.mjs` | `FileTree` over `fs.list` with status badges; `renderChanges()` for grouped change lists |
+| `editor.mjs` | `Editor`: CodeMirror tabs, save with conflict resolution, side-by-side and inline diffs |
+| `terminal.mjs` | `TerminalPanel`: xterm.js over the terminal service |
+| `theme.mjs`, `splitters.mjs`, `ide.css` | dark/light/system themes, resizable panes, and the shared chrome styles |
+
+CodeMirror and xterm.js insert style sheets at run time, so a page using them needs `style-src 'self'
+'unsafe-inline'` in its content security policy.
+
+## Markdown
+
+`web/markdown/markdown.mjs` renders untrusted text, such as model output, into sanitized HTML (DOMPurify):
+GitHub-flavored Markdown (marked), syntax-highlighted code with Copy buttons (highlight.js), and LaTeX math
+(`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) rendered by Temml as native MathML, so no math fonts or layout scripts are
+needed. A dollar sign followed by a space or a digit after the closing sign stays text, so prices are not mistaken
+for math. `renderStreamingMarkdown()` renders text as it arrives and holds back an unfinished code block or display
+formula until it closes. Applications can render diagram code blocks (for example Mermaid) through a
+`renderDiagram` hook. Include `web/markdown/markdown.css` for math, highlighting and code-block styles; it follows
+`data-theme="dark"|"light"` on `<html>` when set and the system color scheme otherwise.
+
+## Media
+
+`web/media/` holds the browser plumbing for speech and vision apps:
+
+- `audio.mjs`: `openMicrophone({onFrame})` captures 20 ms frames of 16 kHz mono Int16 PCM through
+  `capture-worklet.mjs`, which mixes, low-pass filters and downsamples. `openPlayer()` opens a resumed audio context with
+  a streaming `playback-worklet.mjs` node that queues Float32 chunks, pauses and resumes, and reports buffered frames,
+  tagged segments and drain. `resample()` and `pcm16ToFloat32()` convert between rates and formats.
+- `images.mjs`: `prepareImage(file)` returns a PNG or JPEG Blob, re-encoding other formats and downscaling large images.
+- `base64.mjs`: base64 and data URL conversion for binary data in JSON messages.
+
+The worklets load relative to `audio.mjs`, so serve `media/` as one directory.
+
+## Vendored browser libraries
+
+Every library under `web/libs/` is checked in, so building and running an application never needs Node.js or
+network access:
+
+| Directory | Contents | License |
+|---|---|---|
+| `codemirror/` | 19 `@codemirror/*` packages (`VERSIONS`) bundled into one minified ES module | MIT |
+| `xterm/` | `@xterm/xterm` and `@xterm/addon-fit`, unmodified | MIT |
+| `marked/` | `marked` `lib/marked.esm.js`, unmodified | MIT |
+| `dompurify/` | `dompurify` `dist/purify.es.mjs`, unmodified | Apache-2.0 OR MPL-2.0 |
+| `highlightjs/` | `@highlightjs/cdn-assets` `es/highlight.min.js`, unmodified | BSD-3-Clause |
+| `temml/` | `temml` `dist/temml.mjs` minified, with `Temml-Local.css` (as `temml.css`) and `Temml.woff2` | MIT |
+
+[`web/tools/vendor/package.json`](web/tools/vendor/package.json) pins exact versions and `package-lock.json` their
+archive integrity. To update, change the pins and run `cd web/tools/vendor && npm ci --ignore-scripts &&
+node build.mjs`, then commit the regenerated `web/libs/` with the lock file.
 
 ## Filesystem events
 

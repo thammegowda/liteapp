@@ -1,5 +1,7 @@
 #include "liteapp/core/random.h"
 
+#include "liteapp/core/base64.h"
+
 #include <cerrno>
 #include <cstdint>
 #include <limits>
@@ -15,41 +17,6 @@
 #endif
 
 namespace liteapp {
-namespace {
-
-constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-std::string base64url_encode(const std::vector<std::byte>& input) {
-    std::string output;
-    output.reserve((input.size() + 2U) / 3U * 4U);
-    std::size_t index = 0;
-    while (index + 3U <= input.size()) {
-        const auto first = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index]));
-        const auto second = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index + 1U]));
-        const auto third = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index + 2U]));
-        const auto value = (first << 16U) | (second << 8U) | third;
-        output.push_back(alphabet[(value >> 18U) & 0x3fU]);
-        output.push_back(alphabet[(value >> 12U) & 0x3fU]);
-        output.push_back(alphabet[(value >> 6U) & 0x3fU]);
-        output.push_back(alphabet[value & 0x3fU]);
-        index += 3U;
-    }
-    if (input.size() - index == 1U) {
-        const auto value = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index])) << 16U;
-        output.push_back(alphabet[(value >> 18U) & 0x3fU]);
-        output.push_back(alphabet[(value >> 12U) & 0x3fU]);
-    } else if (input.size() - index == 2U) {
-        const auto first = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index]));
-        const auto second = static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[index + 1U]));
-        const auto value = (first << 16U) | (second << 8U);
-        output.push_back(alphabet[(value >> 18U) & 0x3fU]);
-        output.push_back(alphabet[(value >> 12U) & 0x3fU]);
-        output.push_back(alphabet[(value >> 6U) & 0x3fU]);
-    }
-    return output;
-}
-
-}  // namespace
 
 Result<std::vector<std::byte>> secure_random_bytes(std::size_t size) {
     std::vector<std::byte> output(size);
@@ -96,7 +63,7 @@ Result<std::string> secure_random_token(std::size_t byte_count) {
     if (!bytes) {
         return std::unexpected(bytes.error());
     }
-    return base64url_encode(*bytes);
+    return base64_encode(*bytes, Base64::url);
 }
 
 }  // namespace liteapp

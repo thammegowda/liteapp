@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "liteapp/core/result.h"
 #include "liteapp/vfs/filesystem.h"
@@ -108,6 +109,9 @@ struct LocalAccess {
     std::string token;
     std::string cookie_name{"copilot_chats_access"};
     std::string query_parameter{"token"};
+    // GET paths served without the cookie, such as an OAuth redirect URI: a redirect from another site arrives
+    // without the SameSite=Strict cookie. Their handlers must check the request themselves (e.g. the OAuth state).
+    std::vector<std::string> open_paths{};
 };
 
 struct ServerOptions {
@@ -146,8 +150,10 @@ public:
     void get(std::string path, Handler handler);
     void post(std::string path, Handler handler);
     void websocket(std::string path, WebSocketHandler handler, WebSocketOptions options = {});
-    [[nodiscard]] Result<void> serve_static(const std::filesystem::path& root);
+    // Serves a filesystem at "/", with index.html for "/".
     [[nodiscard]] Result<void> serve_static(vfs::FileSystem filesystem);
+    // Serves a ZIP archive, typically one embedded by liteapp_embed_archive() or liteapp_embed_manifest().
+    [[nodiscard]] Result<void> serve_archive(std::span<const std::byte> archive);
     [[nodiscard]] Result<void> serve_files(std::span<const StaticFile> files);
     [[nodiscard]] Result<void> serve_manifest(
         const std::filesystem::path& root,

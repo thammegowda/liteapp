@@ -16,6 +16,8 @@ add_executable(liteapp_tests
     test_random.cpp
     test_service.cpp
     test_vfs.cpp
+    test_websocket.cpp
+    test_workspace.cpp
 )
 target_link_libraries(liteapp_tests
     PRIVATE
@@ -25,6 +27,7 @@ target_link_libraries(liteapp_tests
         liteapp::fs
         liteapp::platform
         liteapp::service
+        liteapp::workspace
         liteapp::httplib
         liteapp_test_assets
 )

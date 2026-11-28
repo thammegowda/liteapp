@@ -6,8 +6,10 @@ GOOGLETEST_REVISION ?= 8eff9e336692fc95961e096564f1044c600b881d
 
 PRESET ?= debug
 NODE ?= node
+# Directory opened by `make example-ide`.
+DIR ?= .
 
-.PHONY: all deps configure build test test-native test-browser test-sanitize clean
+.PHONY: all deps configure build test test-native test-browser test-sanitize example-ide clean
 
 all: build
 
@@ -41,5 +43,11 @@ test-sanitize:
 	UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
 	$(MAKE) test-native PRESET=sanitize
 
+# Builds and runs examples/ide on DIR. Over SSH it only prints the launch URL; forward the port and open it locally.
+example-ide: deps
+	cmake -S examples/ide -B build-example-ide
+	cmake --build build-example-ide --parallel
+	build-example-ide/liteapp-ide "$(DIR)" 
+
 clean:
-	rm -rf build-debug build-sanitize
+	rm -rf build-debug build-sanitize build-example-ide

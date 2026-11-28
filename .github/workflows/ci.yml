@@ -100,6 +100,13 @@ jobs:
         if: runner.os == 'Windows'
         run: cmake --build build-dual-host --config Release --parallel
 
+      # Workspaces and terminals are POSIX; on Windows the library's stubs are covered by the native test build.
+      - name: Build IDE example
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S examples/ide -B build-example-ide -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-example-ide --parallel
+
       - name: Upload dual-host skeleton
         uses: actions/upload-artifact@v6
         with:

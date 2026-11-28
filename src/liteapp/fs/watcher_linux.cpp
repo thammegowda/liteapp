@@ -12,20 +12,12 @@
 #include <thread>
 #include <unistd.h>
 
+#include "liteapp/core/posix.h"
+
 namespace liteapp::fs {
 namespace {
 
-class FileDescriptor {
-public:
-    explicit FileDescriptor(int value = -1) : value_{value} {}
-    ~FileDescriptor() { if (value_ >= 0) ::close(value_); }
-    FileDescriptor(const FileDescriptor&) = delete;
-    FileDescriptor& operator=(const FileDescriptor&) = delete;
-    [[nodiscard]] int get() const noexcept { return value_; }
-
-private:
-    int value_;
-};
+using posix::FileDescriptor;
 
 class InotifyBackend final : public WatcherBackend {
 public:

@@ -12,7 +12,6 @@
 #include "liteapp/http/server.h"
 #include "liteapp/platform/openers.h"
 #include "liteapp/service/router.h"
-#include "liteapp/vfs/filesystem.h"
 
 auto main() -> int {
     const auto token = liteapp::secure_random_token();
@@ -43,12 +42,7 @@ auto main() -> int {
     server.websocket(
         "/services",
         [&services](const liteapp::Request&, liteapp::WebSocket& socket) { services.run(socket); });
-    const auto assets = liteapp::vfs::FileSystem::from_zip(liteapp::dual_host_assets::archive());
-    if (!assets) {
-        std::cerr << assets.error().message << '\n';
-        return 1;
-    }
-    if (const auto served = server.serve_static(*assets); !served) {
+    if (const auto served = server.serve_archive(liteapp::dual_host_assets::archive()); !served) {
         std::cerr << served.error().message << '\n';
         return 1;
     }

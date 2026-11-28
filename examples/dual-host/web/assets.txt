@@ -1,6 +1,15 @@
-app.mjs
-index.html
-services.mjs
-style.css
-wasm-worker.mjs
-webgpu-worker.mjs
+# Served route, then the file relative to the LiteApp checkout; the build embeds exactly these files.
+app.mjs	examples/dual-host/web/app.mjs
+index.html	examples/dual-host/web/index.html
+services.mjs	examples/dual-host/web/services.mjs
+style.css	examples/dual-host/web/style.css
+wasm-worker.mjs	examples/dual-host/web/wasm-worker.mjs
+webgpu-worker.mjs	examples/dual-host/web/webgpu-worker.mjs
+liteapp/liteapp.mjs	web/liteapp.mjs
+liteapp/host/event-client.mjs	web/host/event-client.mjs
+liteapp/host/variant-client.mjs	web/host/variant-client.mjs
+liteapp/transport/channel.mjs	web/transport/channel.mjs
+liteapp/transport/message-transport.mjs	web/transport/message-transport.mjs
+liteapp/transport/protocol.mjs	web/transport/protocol.mjs
+liteapp/transport/service-router.mjs	web/transport/service-router.mjs
+liteapp/transport/websocket-transport.mjs	web/transport/websocket-transport.mjs

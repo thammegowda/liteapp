@@ -1,0 +1,62 @@
+/* Styles for markdown.mjs output that every app needs: math, code highlighting, copy buttons, scrollable wide blocks,
+   diagram sources and the streaming tail. Typography (margins, fonts, table borders) stays with the application.
+   Colors follow data-theme="dark"|"light" on <html> when set, otherwise the system preference. */
+@import url("../libs/temml/temml.css");
+
+:root {
+  --markdown-keyword: #b4637a;
+  --markdown-string: #3f7d3a;
+  --markdown-number: #a0620a;
+  --markdown-comment: #7c8285;
+  --markdown-title: #2f6fb0;
+  --markdown-deletion: #d1242f;
+  --markdown-math-error: #d1242f;
+}
+:root[data-theme=dark] {
+  --markdown-keyword: #e6a1bb;
+  --markdown-string: #a8d9a0;
+  --markdown-number: #dbbe78;
+  --markdown-comment: #8a9290;
+  --markdown-title: #8dc6ee;
+  --markdown-deletion: #f85149;
+  --markdown-math-error: #f85149;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --markdown-keyword: #e6a1bb;
+    --markdown-string: #a8d9a0;
+    --markdown-number: #dbbe78;
+    --markdown-comment: #8a9290;
+    --markdown-title: #8dc6ee;
+    --markdown-deletion: #f85149;
+    --markdown-math-error: #f85149;
+  }
+}
+
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in { color: var(--markdown-keyword); }
+.hljs-string, .hljs-attribute, .hljs-addition { color: var(--markdown-string); }
+.hljs-number, .hljs-symbol { color: var(--markdown-number); }
+.hljs-comment, .hljs-quote { color: var(--markdown-comment); font-style: italic; }
+.hljs-title, .hljs-function, .hljs-section { color: var(--markdown-title); }
+.hljs-deletion { color: var(--markdown-deletion); }
+
+.math-display { display: block; overflow-x: auto; overflow-y: hidden; margin: 8px 0; text-align: center; }
+.math-display > math { display: block math; }
+.math-error { color: var(--markdown-math-error); font-family: ui-monospace, monospace; }
+
+.markdown-scroll { max-width: 100%; overflow: auto; }
+pre:has(> .copy-code), .markdown-scroll > pre { position: relative; }
+.copy-code {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px;
+  padding: 0 6px;
+  opacity: 0;
+}
+pre:hover > .copy-code, .copy-code:focus { opacity: 1; }
+
+.diagram-source { margin: 8px 0; font-size: 11px; opacity: .75; }
+.diagram-source summary { cursor: pointer; padding: 4px 0; }
+
+.markdown-stream-tail, .markdown-stream-code pre { white-space: pre-wrap; }
